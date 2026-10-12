@@ -1,0 +1,304 @@
+"""Data collection: CPU, memory, per-program grouping, network and battery. No UI in here."""
+import os
+import socket
+import struct
+import subprocess
+import time
+from collections import deque
+
+import psutil
+from ctop.ui import HIST
+
+POWER_SUPPLY = "/sys/class/power_supply"
+PSS_THRESHOLD = 30 * 1024 * 1024  # only processes above this get the exact (slower) PSS read
+
+# --------------------------------------------------------------------------
+# Data collection - no UI in here
+# --------------------------------------------------------------------------
+FRIENDLY = {"claude": "Claude Code", "firefox": "Firefox", "chrome": "Chrome", "kwin_wayland": "KWin (desktop)",
+            "plasmashell": "Plasma (desktop)", "Xwayland": "XWayland", "konsole": "Konsole"}
+INTERPRETERS = ("python", "node", "bash", "sh", "java", "perl", "ruby")
+
+
+def prog_name(info):
+    """Group key for a process: all Firefox tabs -> 'Firefox', scripts -> script name."""
+    name = info.get("name") or "?"
+    exe = (info.get("exe") or "").replace(" (deleted)", "")
+    base = os.path.basename(exe)
+    if base.startswith("python"):
+        args = (info.get("cmdline") or [])[1:]
+        it = iter(args)
+        for a in it:
+            if a == "-m":
+                return next(it, name)
+            if not a.startswith("-"):
+                return os.path.basename(a)
+        return name
+    # Claude Code installs as ".../versions/2.1.296" - a version number is no name
+    if base.replace(".", "").isdigit():
+        parts = [x for x in exe.split("/") if x and x != "versions" and not x.replace(".", "").isdigit()]
+        name = parts[-1] if parts else name
+    elif base and not base.startswith(INTERPRETERS):
+        name = base
+    return FRIENDLY.get(name, name)
+
+
+def _status_mem(pid):
+    """Anonymous + shared-memory RSS from /proc/PID/status: cheap, readable for any user."""
+    anon = shm = 0
+    with open(f"/proc/{pid}/status") as f:
+        for line in f:
+            if line.startswith("RssAnon:"):
+                anon = int(line.split()[1])
+            elif line.startswith("RssShmem:"):
+                shm = int(line.split()[1])
+    return (anon + shm) * 1024
+
+
+def read_proc_mem(pid):
+    """Bytes this process really costs.
+
+    Small processes: the cheap status number is plenty accurate. Big ones
+    (Firefox tabs, Claude) share pages with siblings, so there we pay for PSS,
+    which splits shared pages fairly. That keeps the scan around 30 ms instead
+    of ~250 ms - this matters because ctop itself must not drain the battery.
+    """
+    try:
+        rough = _status_mem(pid)
+    except OSError:
+        return 0
+    if rough < PSS_THRESHOLD:
+        return rough
+    try:
+        anon = shm = 0
+        with open(f"/proc/{pid}/smaps_rollup") as f:
+            for line in f:
+                if line.startswith("Pss_Anon:"):
+                    anon = int(line.split()[1])
+                elif line.startswith("Pss_Shmem:"):
+                    shm = int(line.split()[1])
+        return (anon + shm) * 1024
+    except OSError:                         # another user's process: keep the rough number
+        return rough
+
+
+def find_cpu_temp_file():
+    """Path of the CPU package temperature file, found once at start-up.
+
+    psutil.sensors_temperatures() reads every sensor in the machine (~50 ms),
+    far too heavy to run every second, so we locate the single file we need.
+    """
+    base = "/sys/class/hwmon"
+    try:
+        for d in sorted(os.listdir(base)):
+            with open(f"{base}/{d}/name") as f:
+                if f.read().strip() != "coretemp":
+                    continue
+            for n in sorted(x for x in os.listdir(f"{base}/{d}") if x.endswith("_label")):
+                with open(f"{base}/{d}/{n}") as f:
+                    if f.read().startswith("Package"):
+                        return f"{base}/{d}/{n.replace('_label', '_input')}"
+            return f"{base}/{d}/temp1_input"
+    except OSError:
+        pass
+    return None
+
+
+def default_route():
+    """(interface, gateway) of the lowest-metric default route, or (None, None)."""
+    best = None
+    try:
+        with open("/proc/net/route") as f:
+            next(f)
+            for line in f:
+                p = line.split()
+                if p[1] == "00000000" and int(p[3], 16) & 2:
+                    metric = int(p[6])
+                    if best is None or metric < best[0]:
+                        gw = socket.inet_ntoa(struct.pack("<L", int(p[2], 16)))
+                        best = (metric, p[0], gw)
+    except (OSError, ValueError, IndexError):
+        pass
+    return (best[1], best[2]) if best else (None, None)
+
+
+def iface_kind(name):
+    for prefix, kind in (("wl", "Wi-Fi"), ("en", "Ethernet"), ("eth", "Ethernet"),
+                         ("tailscale", "VPN"), ("tun", "VPN"), ("wg", "VPN"),
+                         ("virbr", "VM bridge"), ("docker", "Container"), ("br", "Bridge")):
+        if name.startswith(prefix):
+            return kind
+    return "Other"
+
+
+class Sampler:
+    """Holds every number the panels draw. Fast stats are sampled on the UI
+    thread (they are cheap); slow scans run in background threads."""
+
+    def __init__(self):
+        # CPU
+        self.cores = []
+        self.cpu_hist = deque(maxlen=HIST)
+        self.freq = None
+        self.temp = None
+        self.load = (0, 0, 0)
+        psutil.cpu_percent(percpu=True)             # prime: first call is always 0
+        self.temp_file = find_cpu_temp_file()
+        # memory
+        self.vm = psutil.virtual_memory()
+        self.swap = psutil.swap_memory()
+        self.groups = []                            # [(name, bytes, count, [(pid, start)])] biggest first
+        self.cursor = None                          # program name currently selected
+        self.armed = None                           # program waiting for the 2nd 'x'
+        self.armed_at = 0.0
+        self.term_sent = {}                         # name -> when a polite stop was sent
+        self.procs_busy = False
+        self._names = {}                            # (pid, start time) -> program name
+        # network
+        self.down_hist = deque(maxlen=HIST)
+        self.up_hist = deque(maxlen=HIST)
+        self.down = self.up = 0.0
+        self.net = {}                               # slow info, refreshed by scan_net
+        self.net_busy = False
+        self._net_last = None
+        self.boot_totals = (0, 0)
+        # battery
+        self.bat_dir = next((os.path.join(POWER_SUPPLY, d) for d in sorted(os.listdir(POWER_SUPPLY))
+                             if d.startswith("BAT")), None)
+        self.bat = {}
+        self.watt_hist = deque(maxlen=HIST)
+
+    # ---- battery helpers
+    def _bat(self, name):
+        try:
+            with open(os.path.join(self.bat_dir, name)) as f:
+                return f.read().strip()
+        except (OSError, TypeError):
+            return None
+
+    def _bat_int(self, name):
+        v = self._bat(name)
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    # ---- fast sampling (every 1 s)
+    def sample_fast(self):
+        now = time.time()
+        self.cores = psutil.cpu_percent(percpu=True)
+        total = sum(self.cores) / max(len(self.cores), 1)
+        self.cpu_hist.append(total)
+        try:
+            self.freq = psutil.cpu_freq().current / 1000
+        except Exception:
+            self.freq = None
+        try:
+            with open(self.temp_file) as f:
+                self.temp = int(f.read()) / 1000
+        except (OSError, ValueError, TypeError):
+            self.temp = None
+        self.load = os.getloadavg()
+        self.vm = psutil.virtual_memory()
+        self.swap = psutil.swap_memory()
+
+        # network speed on the default interface (falls back to everything but lo)
+        counters = psutil.net_io_counters(pernic=True)
+        iface = self.net.get("iface")
+        if iface in counters:
+            cur = (counters[iface].bytes_recv, counters[iface].bytes_sent)
+        else:
+            cur = (sum(c.bytes_recv for n, c in counters.items() if n != "lo"),
+                   sum(c.bytes_sent for n, c in counters.items() if n != "lo"))
+        if self._net_last and self._net_last[2] == iface:
+            dt = max(now - self._net_last[3], 1e-3)
+            self.down = max(cur[0] - self._net_last[0], 0) * 8 / dt / 1e6
+            self.up = max(cur[1] - self._net_last[1], 0) * 8 / dt / 1e6
+        self._net_last = (cur[0], cur[1], iface, now)
+        self.boot_totals = cur
+        self.down_hist.append(self.down)
+        self.up_hist.append(self.up)
+
+        # battery: this pack reports current (uA) and voltage (uV), not power
+        if self.bat_dir:
+            cur_a = self._bat_int("current_now")
+            volt = self._bat_int("voltage_now")
+            watts = abs(cur_a * volt) / 1e12 if cur_a is not None and volt else None
+            nominal_v = (self._bat_int("voltage_min_design") or volt or 11_400_000) / 1e6
+            now_ah = (self._bat_int("charge_now") or 0) / 1e6
+            full_ah = (self._bat_int("charge_full") or 0) / 1e6
+            design_ah = (self._bat_int("charge_full_design") or 0) / 1e6
+            self.bat = {
+                "pct": self._bat_int("capacity"),
+                "status": self._bat("status") or "Unknown",
+                "watts": watts,
+                "wh_now": now_ah * nominal_v,
+                "wh_full": full_ah * nominal_v,
+                "wh_design": design_ah * nominal_v,
+                "cycles": self._bat_int("cycle_count"),
+            }
+            self.watt_hist.append(watts or 0.0)
+
+    # ---- slow scans (background threads)
+    def scan_procs(self):
+        self.procs_busy = True
+        try:
+            groups, alive = {}, set()
+            for p in psutil.process_iter():
+                try:
+                    key = (p.pid, p.create_time())  # create_time guards against pid reuse
+                    name = self._names.get(key)
+                    if name is None:
+                        name = self._names[key] = prog_name(p.as_dict(["name", "exe", "cmdline"]))
+                except psutil.Error:
+                    continue
+                alive.add(key)
+                mem = read_proc_mem(p.pid)
+                if mem <= 0:                        # kernel threads cost no user RAM
+                    continue
+                g = groups.setdefault(name, [0, 0, []])
+                g[0] += mem
+                g[1] += 1
+                g[2].append(key)                    # (pid, start time) - used by the kill safety net
+            for key in set(self._names) - alive:    # forget processes that exited
+                del self._names[key]
+            self.groups = sorted(((n, v[0], v[1], v[2]) for n, v in groups.items()),
+                                 key=lambda x: -x[1])
+        finally:
+            self.procs_busy = False
+
+    def scan_net(self):
+        self.net_busy = True
+        try:
+            iface, gw = default_route()
+            info = {"iface": iface, "gateway": gw, "dns": [], "ip": None,
+                    "ssid": None, "signal": None, "rate": None, "ifaces": []}
+            try:
+                with open("/etc/resolv.conf") as f:
+                    info["dns"] = [l.split()[1] for l in f if l.startswith("nameserver")]
+            except OSError:
+                pass
+            stats = psutil.net_if_stats()
+            for name, addrs in sorted(psutil.net_if_addrs().items()):
+                if name == "lo":
+                    continue
+                v4 = next((a.address for a in addrs if a.family == socket.AF_INET), None)
+                up = name in stats and stats[name].isup
+                info["ifaces"].append((name, iface_kind(name), up, v4))
+                if name == iface:
+                    info["ip"] = v4
+            try:                                    # Wi-Fi name / strength from NetworkManager
+                out = subprocess.run(
+                    ["nmcli", "--escape", "no", "-t", "-f", "IN-USE,SSID,SIGNAL,RATE", "dev", "wifi"],
+                    capture_output=True, text=True, timeout=4).stdout
+                for line in out.splitlines():
+                    if line.startswith("*:"):
+                        head, signal, rate = line[2:].rsplit(":", 2)
+                        info["ssid"], info["signal"] = head, int(signal)
+                        info["rate"] = rate.replace("Mbit/s", "").strip()
+                        break
+            except (OSError, ValueError, subprocess.SubprocessError):
+                pass
+            self.net = info
+        finally:
+            self.net_busy = False
