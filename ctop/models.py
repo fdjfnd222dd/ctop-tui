@@ -161,6 +161,7 @@ class ProgramDetail:
     oldest_started: Optional[float] = None
     total_ram_bytes: int = 0
     total_threads: int = 0
+    captured_at: Optional[float] = None               # time.time() when collected; the popup shows its age
 
 
 # ---- alerts ----------------------------------------------------------------

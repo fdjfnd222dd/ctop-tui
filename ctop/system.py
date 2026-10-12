@@ -8,6 +8,8 @@ from collections import deque
 from typing import List, NamedTuple, Tuple
 
 import psutil
+
+from ctop.battery import read_battery
 from ctop.ui import HIST
 
 POWER_SUPPLY = "/sys/class/power_supply"
@@ -179,26 +181,16 @@ class Sampler:
         self.net_busy = False
         self._net_last = None
         self.boot_totals = (0, 0)
-        # battery
-        self.bat_dir = next((os.path.join(POWER_SUPPLY, d) for d in sorted(os.listdir(POWER_SUPPLY))
-                             if d.startswith("BAT")), None)
-        self.bat = {}
+        # battery (portable reader: ctop/battery.py)
+        self.battery = None                         # Battery model or None
+        self.bat = {}                               # same numbers as a dict, what the battery panel reads
         self.watt_hist = deque(maxlen=HIST)
-
-    # ---- battery helpers
-    def _bat(self, name):
-        try:
-            with open(os.path.join(self.bat_dir, name)) as f:
-                return f.read().strip()
-        except (OSError, TypeError):
-            return None
-
-    def _bat_int(self, name):
-        v = self._bat(name)
-        try:
-            return int(v)
-        except (TypeError, ValueError):
-            return None
+        # snapshots published by background collectors (ctop/collectors); None until the first run
+        self.thermal = None
+        self.ping = None
+        self.wifi = None
+        self.sec = None                             # SecurityData
+        self.alerts = []
 
     # ---- fast sampling (every 1 s)
     def sample_fast(self):
@@ -210,11 +202,14 @@ class Sampler:
             self.freq = psutil.cpu_freq().current / 1000
         except Exception:
             self.freq = None
-        try:
-            with open(self.temp_file) as f:
-                self.temp = int(f.read()) / 1000
-        except (OSError, ValueError, TypeError):
-            self.temp = None
+        if self.thermal is not None and self.thermal.cpu_temp is not None:
+            self.temp = self.thermal.cpu_temp
+        else:
+            try:
+                with open(self.temp_file) as f:
+                    self.temp = int(f.read()) / 1000
+            except (OSError, ValueError, TypeError):
+                self.temp = None
         self.load = os.getloadavg()
         self.vm = psutil.virtual_memory()
         self.swap = psutil.swap_memory()
@@ -236,25 +231,16 @@ class Sampler:
         self.down_hist.append(self.down)
         self.up_hist.append(self.up)
 
-        # battery: this pack reports current (uA) and voltage (uV), not power
-        if self.bat_dir:
-            cur_a = self._bat_int("current_now")
-            volt = self._bat_int("voltage_now")
-            watts = abs(cur_a * volt) / 1e12 if cur_a is not None and volt else None
-            nominal_v = (self._bat_int("voltage_min_design") or volt or 11_400_000) / 1e6
-            now_ah = (self._bat_int("charge_now") or 0) / 1e6
-            full_ah = (self._bat_int("charge_full") or 0) / 1e6
-            design_ah = (self._bat_int("charge_full_design") or 0) / 1e6
-            self.bat = {
-                "pct": self._bat_int("capacity"),
-                "status": self._bat("status") or "Unknown",
-                "watts": watts,
-                "wh_now": now_ah * nominal_v,
-                "wh_full": full_ah * nominal_v,
-                "wh_design": design_ah * nominal_v,
-                "cycles": self._bat_int("cycle_count"),
-            }
-            self.watt_hist.append(watts or 0.0)
+        # battery: read_battery() copes with charge_*/energy_* and current*voltage/power_now packs
+        b = read_battery()
+        self.battery = b
+        if b is None:
+            self.bat = {}
+        else:
+            self.bat = {"pct": b.pct, "status": b.status, "watts": b.watts,
+                        "wh_now": b.wh_now or 0.0, "wh_full": b.wh_full or 0.0,
+                        "wh_design": b.wh_design or 0.0, "cycles": b.cycles}
+            self.watt_hist.append(b.watts or 0.0)
 
     # ---- slow scans (background threads)
     def scan_procs(self):

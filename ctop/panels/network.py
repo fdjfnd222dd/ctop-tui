@@ -1,13 +1,14 @@
 """Network panel."""
 from rich.text import Text
 
-from ctop.ui import DIM, FG, Panel, TRACK, _hex, fmt_mbps, gb, grad, graph, kv, lerp
+from ctop.render.quality import quality_lines
+from ctop.ui import DIM, FG, Panel, TRACK, _hex, fmt_mbps, gb, graph, kv, lerp
 class NetPanel(Panel):
     def build(self, s, w, h):
         net = s.net
         down_c = lambda f: _hex(lerp((60, 110, 200), (110, 225, 245), f))
         up_c = lambda f: _hex(lerp((160, 70, 170), (250, 150, 225), f))
-        gr = max(2, min(5, (h - 17) // 2))
+        gr = max(1, min(5, 1 + (h - 18) // 2))
         pk_d, pk_u = max(max(s.down_hist, default=0), 1.0), max(max(s.up_hist, default=0), 1.0)
 
         def speed_head(arrow, val, peak, color):
@@ -27,18 +28,13 @@ class NetPanel(Panel):
         if not net:
             lines.append(Text("looking up network details…", style=DIM))
             return lines
-        if net.get("ssid"):
-            t = kv("Wi-Fi", net["ssid"], "bold")
-            t.append(f"   signal {net['signal']}%", grad(1 - net["signal"] / 100))
-            if net.get("rate"):
-                t.append(f"   link {net['rate']} Mbps", DIM)
-            lines.append(t)
+        lines += quality_lines(s.ping, s.wifi, w)[:max(0, min(6, h - 12))]
         lines.append(kv("Interface", net.get("iface") or "none (offline)", lw=14))
         lines.append(kv("Your IP", net.get("ip") or "-", "bold", lw=14))
         lines.append(kv("Gateway", f"{net.get('gateway') or '-'}   (your router)", lw=14))
         lines.append(kv("DNS", "   ".join(net.get("dns") or ["-"]) + "   (name lookup)", lw=14))
-        lines.append(Text())
-        lines.append(Text("Interfaces", style=DIM))
+        if h - len(lines) >= 2:
+            lines.append(Text("Interfaces", style=DIM))
         for name, kind, up, v4 in net.get("ifaces", []):
             t = Text(no_wrap=True)
             t.append("● ", "#56d364" if up else "#6e7681")

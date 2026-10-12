@@ -30,6 +30,45 @@ PROTECTED_PREFIXES = (
     "konsole", "kitty", "alacritty", "foot", "xterm", "gnome-terminal", "tmux",
     # this tool, and the Claude Code session that may be driving the laptop
     "ctop", "claude",
+    # GNOME shell, session, keyring, settings daemons, portals. Only the named session
+    # programs: a bare "gnome-" / "mate-" / "lxqt-" / "xfce4-" / "kde" / "cosmic-" would
+    # also lock ordinary apps such as gnome-calculator or xfce4-screenshooter.
+    "gnome-shell", "gnome-session", "gnome-keyring", "gnome-settings", "gsd-", "mutter", "goa-",
+    "xdg-desktop-por", "xdg-document", "xdg-permission",
+    # KDE extras (kwin/plasma/kded/ksecret/... are already listed above)
+    "kdeinit", "klauncher", "kcminit", "kaccess", "startkde",
+    # XFCE
+    "xfce4-session", "xfce4-panel", "xfce4-power", "xfwm4", "xfdesktop", "xfsettingsd", "xfconfd",
+    # Cinnamon (every program starting with csd- belongs to the session)
+    "cinnamon", "muffin", "nemo-desktop", "csd-",
+    # MATE
+    "mate-session", "mate-panel", "mate-settings", "mate-power", "mate-polkit", "mate-screens",
+    "mate-notific", "marco",
+    # LXQt / LXDE
+    "lxqt-session", "lxqt-panel", "lxqt-policykit", "lxqt-powermana", "lxqt-globalkeys",
+    "lxqt-notificat", "lxsession", "lxpanel",
+    # COSMIC / Budgie (Budgie's apps are not named budgie-*, so every budgie- program is session)
+    "cosmic-comp", "cosmic-session", "cosmic-panel", "cosmic-greeter", "budgie-",
+    # i3 / sway / Hyprland / wayfire and other window managers, bars, notifiers.
+    # Short names are safe: no common application starts with them. Never add 1-2 letters.
+    "i3", "sway", "hypr", "wayfire", "waybar", "niri", "labwc", "bspwm", "sxhkd", "dwm", "awesome",
+    "xmonad", "qtile", "openbox", "fluxbox", "icewm", "herbstluftwm", "mako",
+    # other display managers, boot splash, X start-up
+    "lxdm", "greetd", "plymouth", "xinit", "startx",
+    # more terminals (the terminal ctop runs in must never die)
+    "xfce4-terminal", "mate-terminal", "lxterminal", "qterminal", "terminator", "tilix", "wezterm",
+    "ghostty", "ptyxis", "kgx", "yakuake", "guake", "urxvt", "rxvt", "zellij",
+    # Debian/Ubuntu/Fedora system services. Root-owned ones are refused by the owner check,
+    # but under sudo the name list is the only guard. Debian and Arch names both listed.
+    "cron", "anacron", "rsyslog", "syslog-ng", "apparmor", "unattended-up", "packagekit", "snapd",
+    "avahi", "modemmanager", "accounts-daemon", "colord", "cups", "udisks", "rtkit", "firewalld",
+    "fail2ban", "dhclient", "dhcpcd", "networkd", "chrony", "ntpd", "irqbalance", "thermald", "acpid",
+    "smartd", "power-profiles",
+    # per-user session helpers: file system, input methods, accessibility, settings, VM guests
+    "gvfs", "ibus", "fcitx", "at-spi", "dconf", "spice-vdagent", "vmtoolsd", "vboxclient",
+    "vboxservice", "qemu-ga",
+    # NOT locked on purpose (harmless to close or they restart): nautilus, dolphin, nemo,
+    # caja, thunar, tracker-*, dunst, picom, orca (would hit orca-slicer), evolution.
 )
 
 

@@ -9,7 +9,7 @@ description = "A btop-style full-screen terminal dashboard: RAM ring by program,
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
-dependencies = ["textual>=0.80", "psutil>=5.9"]
+dependencies = ["textual>=0.80", "psutil>=5.9", "rich>=13"]
 
 [project.scripts]
 ctop = "ctop.app:main"
