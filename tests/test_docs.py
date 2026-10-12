@@ -76,7 +76,8 @@ class TestReadme(unittest.TestCase):
     def test_readme_sections(self):
         text = read("README.md")
         position = -1
-        for heading in ("## Install", "## What you get", "## Keys", "## Safety", "## Privacy",
+        for heading in ("## Features", "## Install", "## Keys", "## Why I built it",
+                        "## Built with", "## Safety", "## Privacy",
                         "## Troubleshooting"):
             index = text.find(heading)
             self.assertGreater(index, position, f"{heading} missing or out of order")

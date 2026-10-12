@@ -1,12 +1,37 @@
 # ctop
 
-**A btop-style terminal dashboard that gives plain answers.** ctop shows which programs are eating your RAM (as a ring chart, in GB and %), how fast your battery is draining (in watts, and how long it will last), how healthy your network is (in ms and Mbps), and who can reach your computer. When something is out of hand, select it and press `x` twice to stop it, with a safety net that refuses to touch anything important. It is read-only otherwise: no root, no telemetry, and it never scans your network.
+**A btop-style terminal dashboard that groups RAM by program and shows battery watts and network quality.**
 
-![ctop overview](docs/screenshots/overview.png)
-
+[![CI](https://github.com/fdjfnd222dd/ctop-tui/actions/workflows/ci.yml/badge.svg)](https://github.com/fdjfnd222dd/ctop-tui/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)
 ![Linux](https://img.shields.io/badge/platform-Linux-lightgrey)
+
+![ctop overview](docs/screenshots/overview.png)
+
+ctop shows which programs are eating your RAM (as a ring chart, in GB and %), how fast your battery is draining (in watts, and how long it will last), how healthy your network is (in ms and Mbps), and who can reach your computer. When something is out of hand, select it and press `x` twice to stop it, with a safety net that refuses to touch anything important. It is read-only otherwise: no root, no telemetry, and it never scans your network.
+
+## Features
+
+| | |
+|---|---|
+| **Memory** | A ring chart with one coloured arc per program, and a list with GB, CPU and share for each. Shared memory is split fairly, so the list adds up to your real RAM. |
+| **Battery** | % charged, watts being used, hours left, battery health, and a power graph. |
+| **CPU** | Load per core, temperature and fan speed (where the hardware reports them), and a history graph. |
+| **Network** | Download and upload in Mbps, ping to your router and the internet, Wi-Fi signal quality, your IP, gateway, DNS and interfaces. |
+| **Security page** | Which programs accept connections and from whom, who your computer is talking to, devices on your network, the firewall state, and a plain-English "How exposed am I?". |
+| **Program details** | Press `Enter` on a program to see its processes, open connections and listening ports. |
+| **Alert banner** | One line at the top when RAM, swap, battery, heat, a fan, Wi-Fi or ping needs attention. |
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/security.png" alt="Security page"><br><sub>The Security page (<code>Tab</code>): ports, connections, devices, firewall.</sub></td>
+<td width="50%"><img src="docs/screenshots/details.png" alt="Program details"><br><sub>Program details (<code>Enter</code>): processes, connections, ports.</sub></td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/screenshots/stop-prompt.png" alt="Stopping a program"><br><sub>Stopping a program takes two presses of <code>x</code>. Anything important is locked.</sub></td>
+</tr>
+</table>
 
 ## Install
 
@@ -30,28 +55,6 @@ Only the first line uses sudo. `install.sh` never does: it puts ctop in a privat
 
 **Want to look first?** Run `ctop --demo`. It shows made-up numbers, reads nothing from your machine and never stops anything.
 
-## What you get
-
-| | |
-|---|---|
-| **Memory** | A ring chart with one coloured arc per program, and a list with GB, CPU and share for each. Shared memory is split fairly, so the list adds up to your real RAM. |
-| **Battery** | % charged, watts being used, hours left, battery health, and a power graph. |
-| **CPU** | Load per core, temperature and fan speed (where the hardware reports them), and a history graph. |
-| **Network** | Download and upload in Mbps, ping to your router and the internet, Wi-Fi signal quality, your IP, gateway, DNS and interfaces. |
-| **Security page** | Which programs accept connections and from whom, who your computer is talking to, devices on your network, the firewall state, and a plain-English "How exposed am I?". |
-| **Program details** | Press `Enter` on a program to see its processes, open connections and listening ports. |
-| **Alert banner** | One line at the top when RAM, swap, battery, heat, a fan, Wi-Fi or ping needs attention. |
-
-<table>
-<tr>
-<td width="50%"><img src="docs/screenshots/security.png" alt="Security page"><br><sub>The Security page (<code>Tab</code>): ports, connections, devices, firewall.</sub></td>
-<td width="50%"><img src="docs/screenshots/details.png" alt="Program details"><br><sub>Program details (<code>Enter</code>): processes, connections, ports.</sub></td>
-</tr>
-<tr>
-<td colspan="2"><img src="docs/screenshots/stop-prompt.png" alt="Stopping a program"><br><sub>Stopping a program takes two presses of <code>x</code>. Anything important is locked.</sub></td>
-</tr>
-</table>
-
 ## Keys
 
 | Key | What it does |
@@ -66,6 +69,17 @@ Only the first line uses sudo. `install.sh` never does: it puts ctop in a privat
 | `+` `-` | refresh faster / slower (0.5 s, 1 s, 2 s, 5 s) |
 | `?` | help |
 | `q` | quit |
+
+## Why I built it
+
+I wanted a btop-style view that answers the questions an 8 GB laptop actually raises: which program is using my RAM, how many watts is the battery draining, and is my network any good. Existing monitors list processes one by one, so a browser with thirty helper processes looks like thirty small problems. ctop groups memory by program, shows battery power and network quality in plain units, and keeps the one dangerous action (stopping a program) behind a safety net.
+
+## Built with
+
+- [Python](https://www.python.org/) 3.9+
+- [Textual](https://textual.textualize.io/) for the terminal UI
+- [Rich](https://github.com/Textualize/rich) for rendering
+- [psutil](https://github.com/giampaolo/psutil) for process, memory, CPU and network data
 
 ## Safety
 
