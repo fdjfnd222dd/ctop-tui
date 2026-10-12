@@ -12,6 +12,7 @@ from textual.widgets import Static
 
 from ctop.alerts import AlertInput, evaluate
 from ctop.collectors.details import program_detail
+from ctop.demo import DemoSampler, demo_detail, make_demo_collectors
 from ctop.collectors.firewall import FirewallCollector
 from ctop.collectors.lan import LanCollector
 from ctop.collectors.ping import PingCollector
@@ -42,7 +43,7 @@ SORT_WORDS = {"ram": "RAM (biggest first)", "cpu": "CPU (busiest first; 100% = o
 SORT_TAG = {"ram": "RAM", "cpu": "CPU", "name": "name"}
 PAGE_NAMES = {1: "1 Overview", 2: "2 Security"}
 HINTS = {
-    1: "↑/↓ select   Enter details   x x stop   s sort   / search   Tab security page   space pause   ? help   q quit",
+    1: "↑/↓ select  Enter details  x x stop  s sort  / search  Tab security  space pause  ? help  q quit",
     2: "Tab or 1/2 switch page   space pause   +/- speed   ? help   q quit",
 }
 # seconds between refreshes of each collector while its page is in front / out of sight
@@ -135,7 +136,10 @@ class DetailScreen(ModalScreen):
             app = self.app
             group = next((g for g in app.s.groups if g.name == self.prog), None)
             listeners, connections = app.ports.data or ((), ())
-            detail = program_detail(self.prog, group.members if group else [], listeners, connections)
+            if app.demo and group:
+                detail = demo_detail(self.prog, group)
+            else:
+                detail = program_detail(self.prog, group.members if group else [], listeners, connections)
             app.call_from_thread(self.show, detail)
         except Exception:                    # screen closed or app quitting: nothing to update
             pass
@@ -232,19 +236,28 @@ class Ctop(App):
             yield Static(id="tags")
 
     # ---- start-up
+    def __init__(self, demo=False):
+        super().__init__()
+        self.demo = demo            # made-up numbers, nothing is ever stopped (see ctop/demo.py)
+
     def on_mount(self):
-        self.s = Sampler()
+        self.s = DemoSampler() if self.demo else Sampler()
         self.page = 1
         self.speed_i = 1
         self._last_procs = self._last_net = 0.0
         self._sec_key = None
         # background data sources; each runs on its own worker thread
-        self.thermal = ThermalCollector()
-        self.ping = PingCollector()
-        self.wifi = WifiCollector()
-        self.ports = PortsCollector()
-        self.lan = LanCollector()
-        self.firewall = FirewallCollector()
+        if self.demo:
+            fake = make_demo_collectors()
+            self.thermal, self.ping, self.wifi = fake["thermal"], fake["ping"], fake["wifi"]
+            self.ports, self.lan, self.firewall = fake["ports"], fake["lan"], fake["firewall"]
+        else:
+            self.thermal = ThermalCollector()
+            self.ping = PingCollector()
+            self.wifi = WifiCollector()
+            self.ports = PortsCollector()
+            self.lan = LanCollector()
+            self.firewall = FirewallCollector()
         self.collectors = [self.thermal, self.ping, self.wifi, self.ports, self.lan, self.firewall]
         self.query_one("#sec-lan").border_subtitle = "passive: nothing is scanned"
         self.set_page(1)
@@ -340,6 +353,8 @@ class Ctop(App):
             t.append(f'   filter: "{s.filter_text}"', "#39c5cf")
         if s.paused:
             t.append("   PAUSED ", "bold #000000 on #f2cc60")
+        if self.demo:
+            t.append("   DEMO ", "bold #000000 on #7aa2d6")
         self.query_one("#tags", Static).update(t)
 
     # ---- status line (and the pop-up's own message line when one is open)
@@ -504,9 +519,9 @@ class Ctop(App):
             return
         s.armed, s.armed_at = name, now
         what = "FORCE-KILL (cannot be saved)" if force else "Stop"
-        self.say(f"{what} {name}?  {group.count} process{'es' if group.count != 1 else ''}, "
-                 f"{fmt_gb(group.bytes)} of RAM. Unsaved work in it is lost.  "
-                 f"Press x again to confirm - any other key cancels.", "bold #ffffff on #6b1f1f")
+        self.say(f"{what} {name}? {group.count} process{'es' if group.count != 1 else ''}, "
+                 f"{fmt_gb(group.bytes)}. Unsaved work is lost.  x again = confirm, any other key = cancel",
+                 "bold #ffffff on #6b1f1f")
         self.redraw_list()
         self.set_timer(ARM_SECONDS, self.arm_timeout)
 
@@ -516,6 +531,11 @@ class Ctop(App):
 
     def do_kill(self, name, group, force):
         s = self.s
+        if self.demo:                                        # fake programs: pretend, send nothing
+            s.armed = None
+            self.say(f"Demo mode: pretending to stop {name} - nothing was touched.", "#f2cc60")
+            self.redraw_list()
+            return
         members = group.members
         sent = signal_members(members, signal.SIGKILL if force else signal.SIGTERM)
         s.armed = None
@@ -538,5 +558,12 @@ class Ctop(App):
             threading.Thread(target=s.scan_procs, daemon=True).start()
 
 
-def main():
-    Ctop().run()
+def main(argv=None):
+    import argparse
+    from ctop import __version__
+    ap = argparse.ArgumentParser(prog="ctop", description="A btop-style terminal dashboard (read-only).")
+    ap.add_argument("--demo", action="store_true",
+                    help="run with made-up numbers (safe to try; reads nothing, stops nothing)")
+    ap.add_argument("--version", action="version", version=f"ctop {__version__}")
+    args = ap.parse_args(argv)
+    Ctop(demo=args.demo).run()

@@ -76,19 +76,19 @@ class TestReadme(unittest.TestCase):
     def test_readme_sections(self):
         text = read("README.md")
         position = -1
-        for heading in ("## What you see", "## Keys", "## Install", "## Privacy",
-                        "## Safety", "## Troubleshooting"):
+        for heading in ("## Install", "## What you get", "## Keys", "## Safety", "## Privacy",
+                        "## Troubleshooting"):
             index = text.find(heading)
             self.assertGreater(index, position, f"{heading} missing or out of order")
             position = index
-        for line in ("./install.sh", "sudo apt install python3 python3-venv git",
-                     "sudo pacman -S python git"):
+        for line in ("./install.sh", "sudo apt install -y python3 python3-venv git",
+                     "sudo pacman -S --needed python git", "ctop --demo"):
             self.assertIn(line, text)
 
     def test_readme_key_table_matches(self):
         text = read("README.md")
-        for row in ("| Tab, 1, 2 |", "| Enter |", "| s |", "| / |",
-                    "| space |", "| + / - |", "| ? |", "| q |"):
+        for row in ("| `Tab`, `1`, `2` |", "| `Enter` |", "| `s` |", "| `/` |",
+                    "| `space` |", "| `+` `-` |", "| `?` |", "| `q` |"):
             self.assertIn(row, text)
 
 

@@ -1,11 +1,16 @@
 # ctop
 
-A read-only, btop-style terminal dashboard for Linux: RAM by program, battery watts, network quality and a security view.
+**A btop-style terminal dashboard that gives plain answers.** ctop shows which programs are eating your RAM (as a ring chart, in GB and %), how fast your battery is draining (in watts, and how long it will last), how healthy your network is (in ms and Mbps), and who can reach your computer. When something is out of hand, select it and press `x` twice to stop it, with a safety net that refuses to touch anything important. It is read-only otherwise: no root, no telemetry, and it never scans your network.
 
-<!-- screenshot: add docs/screenshot.png -->
-![ctop screenshot](docs/screenshot.png)
+![ctop overview](docs/screenshots/overview.png)
 
-## Quick install (Debian, Ubuntu, Linux Mint, Pop!_OS, Raspberry Pi OS)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)
+![Linux](https://img.shields.io/badge/platform-Linux-lightgrey)
+
+## Install
+
+**Debian, Ubuntu, Linux Mint, Pop!_OS, Raspberry Pi OS** (3 lines):
 
 ```
 sudo apt install -y python3 python3-venv git
@@ -13,134 +18,115 @@ git clone https://github.com/fdjfnd222dd/ctop-tui && cd ctop-tui
 ./install.sh && ctop
 ```
 
-That is all. `install.sh` never uses sudo; the only sudo line is the first one. Quit ctop with `q`.
+**Arch, EndeavourOS, Manjaro:**
 
-## What you see
+```
+sudo pacman -S --needed python git
+git clone https://github.com/fdjfnd222dd/ctop-tui && cd ctop-tui
+./install.sh && ctop
+```
 
-- CPU: load per core, with temperature and fan speed where the hardware reports them.
-- Battery: charge rate in watts and battery health.
-- Memory: a RAM ring and a list of programs, sorted by RAM, CPU or name.
-- Network: download and upload speed, ping to your router and to the internet, and Wi-Fi quality.
-- Security page: listening ports, connections by program, devices on your network, and "How exposed am I?".
-- Program details: press Enter on a program to see its processes, files and connections.
-- Alert banner: one line at the top when RAM, swap, battery, heat, fan, Wi-Fi or ping needs a look.
+Only the first line uses sudo. `install.sh` never does: it puts ctop in a private `.venv` inside the folder and links the `ctop` command into `~/.local/bin`. If `ctop` is "not found" right after installing, open a new terminal. Quit with `q`.
+
+**Want to look first?** Run `ctop --demo`. It shows made-up numbers, reads nothing from your machine and never stops anything.
+
+## What you get
+
+| | |
+|---|---|
+| **Memory** | A ring chart with one coloured arc per program, and a list with GB, CPU and share for each. Shared memory is split fairly, so the list adds up to your real RAM. |
+| **Battery** | % charged, watts being used, hours left, battery health, and a power graph. |
+| **CPU** | Load per core, temperature and fan speed (where the hardware reports them), and a history graph. |
+| **Network** | Download and upload in Mbps, ping to your router and the internet, Wi-Fi signal quality, your IP, gateway, DNS and interfaces. |
+| **Security page** | Which programs accept connections and from whom, who your computer is talking to, devices on your network, the firewall state, and a plain-English "How exposed am I?". |
+| **Program details** | Press `Enter` on a program to see its processes, open connections and listening ports. |
+| **Alert banner** | One line at the top when RAM, swap, battery, heat, a fan, Wi-Fi or ping needs attention. |
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/security.png" alt="Security page"><br><sub>The Security page (<code>Tab</code>): ports, connections, devices, firewall.</sub></td>
+<td width="50%"><img src="docs/screenshots/details.png" alt="Program details"><br><sub>Program details (<code>Enter</code>): processes, connections, ports.</sub></td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/screenshots/stop-prompt.png" alt="Stopping a program"><br><sub>Stopping a program takes two presses of <code>x</code>. Anything important is locked.</sub></td>
+</tr>
+</table>
 
 ## Keys
 
 | Key | What it does |
 |---|---|
-| Tab, 1, 2 | switch page: 1 Overview, 2 Security |
-| Up/Down or j/k | select a program |
-| Enter | details of the selected program |
-| x then x | stop the selected program (asks twice; system programs are locked) |
-| s | cycle sort: RAM, CPU, name |
-| / | search by name (type to filter, Enter keeps it, Esc clears) |
-| space | pause / resume |
-| + / - | refresh faster / slower (0.5 s, 1 s, 2 s, 5 s) |
-| ? | help |
-| q | quit |
-
-## Install
-
-`install.sh` never uses sudo. If something is missing, it prints the one line for you to run yourself.
-
-### Arch / EndeavourOS / Manjaro
-
-Only if Python or git is missing:
-
-```
-sudo pacman -S python git
-```
-
-Then:
-
-```
-git clone https://github.com/fdjfnd222dd/ctop-tui && cd ctop-tui && ./install.sh
-ctop
-```
-
-### Debian 11/12/13 and Ubuntu 22.04/24.04
-
-Only if Python, the venv module or git is missing:
-
-```
-sudo apt install python3 python3-venv git
-```
-
-Then:
-
-```
-git clone https://github.com/fdjfnd222dd/ctop-tui && cd ctop-tui && ./install.sh
-ctop
-```
-
-Run `./install.sh --dry-run` first if you want to see the plan before anything changes.
-The script puts ctop in `<repo>/.venv` and links the `ctop` command into `~/.local/bin`. Nothing else on the machine changes.
-
-## Update
-
-```
-git pull && ./install.sh
-```
-
-## Uninstall
-
-```
-./uninstall.sh
-```
-
-This removes the `ctop` link in `~/.local/bin` and the `.venv` folder inside the checkout. It does not delete the checkout itself; remove that folder by hand if you want it gone.
-
-## Privacy
-
-- ctop is read-only. It changes nothing on your system.
-- It sends nothing over the internet. The only packets it sends are a few small pings: one to your router, and one to a public internet address (the default is `DEFAULT_TARGET` in `ctop/collectors/ping.py`). You can change that address with `CTOP_PING_TARGET`, or turn the internet ping off with `CTOP_NO_PING=1`.
-- It does not scan your network. Devices come from the kernel's neighbour table, which is the list of devices your computer has talked to recently.
-- It does no reverse-DNS lookups and does not ask "what is my public IP" services.
-- No telemetry. No files are written.
+| `Tab`, `1`, `2` | switch page: 1 Overview, 2 Security |
+| `↑` `↓` or `j` `k` | select a program (`PgUp` `PgDn` `Home` `End` jump) |
+| `Enter` | details of the selected program |
+| `x` then `x` | stop the selected program (asks twice; system programs are locked) |
+| `s` | cycle sort: RAM, CPU, name |
+| `/` | search by name (type to filter, `Enter` keeps it, `Esc` clears) |
+| `space` | pause / resume |
+| `+` `-` | refresh faster / slower (0.5 s, 1 s, 2 s, 5 s) |
+| `?` | help |
+| `q` | quit |
 
 ## Safety
 
-- ctop is read-only except for one action: stopping a program.
-- A stop needs two deliberate presses of `x`, and the program must pass the safety list.
-- Desktop, login, audio, network, power, firewall, terminal and ctop's own programs are locked, and so is Claude Code.
-- ctop never uses root and never stops programs that belong to other users.
-- A stop is polite first (SIGTERM). A force-kill happens only if the program is still alive afterwards.
+Stopping a program is the only thing ctop can change, and it is fenced in:
 
-Read [docs/SAFETY.md](docs/SAFETY.md) for the six rules and the full list of locked names.
+- It needs two deliberate presses of `x`, and holding the key down does not count.
+- Desktop, login, audio, network, power, firewall and terminal programs are locked, across KDE, GNOME, XFCE, Cinnamon, MATE, LXQt and the common tiling window managers. So are ctop itself and the terminal it runs in.
+- It only ever stops your own programs, never root's or another user's, and never uses root.
+- If any process in a group is locked, the whole group is refused.
+- A stop is polite first (SIGTERM). A force-kill is offered only if the program is still alive afterwards.
+
+Details, and the full list of locked names, are in [docs/SAFETY.md](docs/SAFETY.md).
+
+## Privacy
+
+- ctop is read-only. It writes no files and sends no telemetry.
+- The only packets it sends are a few small pings: one to your router and one to a public internet address (`DEFAULT_TARGET` in `ctop/collectors/ping.py`). Change it with `CTOP_PING_TARGET`, or turn the internet ping off with `CTOP_NO_PING=1`.
+- It never scans your network. "Devices" comes from the kernel's neighbour table: the devices your computer has already talked to recently.
+- No reverse-DNS lookups and no "what is my public IP" services.
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---|---|
-| `ensurepip is not available` | run `sudo apt install python3-venv` |
-| `ctop: command not found` | add `~/.local/bin` to your PATH: run `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc`, then open a new terminal |
-| boxes look broken, or no colours | use a UTF-8 terminal with 256 colours; the Linux text console (Ctrl+Alt+F2 and friends) is not supported |
-| No battery found | desktop or virtual machine: normal |
-| Temp not reported, or no fan reported | your hardware exposes no sensor: normal |
+| `ctop: command not found` | open a new terminal, or run `source ~/.profile` |
+| `ensurepip is not available` | `sudo apt install python3-venv` |
+| boxes look broken, or no colours | use a UTF-8 terminal with 256 colours; the Linux text console (Ctrl+Alt+F2) is not supported |
+| No battery found | desktop PC or virtual machine: normal |
+| No temperature or fan shown | your hardware exposes no sensor: normal |
 | Wi-Fi line missing | you are not on Wi-Fi, or install `network-manager` (for `nmcli`) or `iw` |
-| firewall: could not tell | reading firewall rules needs root; ctop never asks for it |
-| (other user) in the ports table | that program belongs to another user |
+| firewall: "could not tell" | reading firewall rules needs root; ctop never asks for it |
+| `(other user)` in the ports table | that program belongs to another user |
 
 ## Requirements
 
-- Linux. Python 3.9 or newer.
-- git, and the `venv` module (on Debian and Ubuntu it is the `python3-venv` package).
+- Linux with Python 3.9 or newer, git, and the `venv` module (Debian and Ubuntu: `python3-venv`).
 - A UTF-8 terminal with 256 colours and a font with Braille characters, such as DejaVu Sans Mono.
 - Installed by pip into `.venv`: `textual`, `psutil`, `rich`. Nothing else.
 - Optional, for the Wi-Fi line: `network-manager` (`nmcli`) or `iw`.
 - Developed on Arch. Other distros: see [docs/PORTING-DEBIAN.md](docs/PORTING-DEBIAN.md).
 
-## License
+## Update and uninstall
 
-MIT. See [LICENSE](LICENSE).
+```
+git pull && ./install.sh     # update
+./uninstall.sh               # removes the ctop link and .venv; delete the folder yourself
+```
+
+## Development
+
+```
+.venv/bin/python -m unittest discover -s tests      # 280+ tests, no root, no network
+.venv/bin/python scripts/make_screenshots.py        # regenerate the images from demo mode
+```
+
+Design notes and the per-module specs are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/specs](docs/specs).
 
 ## Reporting problems
 
-Open an issue at `https://github.com/fdjfnd222dd/ctop-tui/issues`. Include:
+Open an issue at <https://github.com/fdjfnd222dd/ctop-tui/issues> with your distro and version, `python3 --version`, which panels were empty or wrong, and any error text. Please do not paste IP addresses, Wi-Fi names, usernames or hostnames; replace them with placeholders.
 
-- your distro and version, and the output of `python3 --version`;
-- which panels were empty or wrong;
-- any error text ctop showed.
+## License
 
-Do not paste IP addresses, Wi-Fi names, usernames or hostnames. Replace them with placeholders first.
+MIT. See [LICENSE](LICENSE).

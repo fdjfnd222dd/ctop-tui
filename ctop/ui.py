@@ -190,6 +190,12 @@ def fmt_gb(nbytes):
 # --------------------------------------------------------------------------
 # Panels - each one turns the Sampler's numbers into lines of coloured Text
 # --------------------------------------------------------------------------
+def _cropped(t, width):
+    t = t.copy()
+    t.truncate(width, overflow="crop")
+    return t
+
+
 class Panel(Static):
     def __init__(self, title, **kw):
         super().__init__(**kw)
@@ -204,7 +210,9 @@ class Panel(Static):
             return
         try:
             lines = self.build(self._state, size.width, size.height)
-            self.update(Text("\n").join(lines[: size.height]))
+            # a line wider than the box would wrap and push everything down: crop instead
+            lines = [l if l.cell_len <= size.width else _cropped(l, size.width) for l in lines[: size.height]]
+            self.update(Text("\n").join(lines))
         except Exception as e:                      # a bad frame must never kill the dashboard
             self.update(Text(f"draw error: {e!r}", style="red"))
 

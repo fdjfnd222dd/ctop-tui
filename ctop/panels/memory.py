@@ -41,7 +41,7 @@ class MemPanel(Panel):
             kv("RAM used", f"{gb(used):.1f} GB  ({used_pct:.0f}%)", f"bold {grad(used_pct / 100)}"),
             meter(used / total, lw),
             kv("Available", f"{gb(vm.available):.1f} GB"),
-            kv("Cache", f"{gb(getattr(vm, 'cached', 0)):.1f} GB (freed when needed)"),
+            kv("Cache", f"{gb(getattr(vm, 'cached', 0)):.1f} GB (reusable)"),
             kv("Swap", f"{gb(sw.used):.1f} / {gb(sw.total):.1f} GB", grad(sw.percent / 100)),
             meter(sw.percent / 100, lw),
         ]
@@ -59,10 +59,12 @@ class MemPanel(Panel):
 
         # ---- right column: the programs (this is the ring's legend)
         rw = w - lw - 2
-        bar_w = max(0, min(26, rw - 3 - 22 - 7 - 11 - 7 - 8 - 4 - 10))
+        # the name column shrinks first so Procs / RAM / CPU / Share always stay visible
+        name_w = max(12, min(22, rw - 36))
+        bar_w = max(0, min(26, rw - 3 - name_w - 7 - 11 - 7 - 8 - 4 - 10))
         head = Text(no_wrap=True)
         arrow = {"ram": "RAM", "cpu": "CPU", "name": "Program"}[s.sort_key]
-        head.append("   " + f"{'Program':<22}{'Procs':>6} {'RAM':>10} {'CPU':>6} {'Share':>7}", DIM)
+        head.append("   " + f"{'Program':<{name_w}}{'Procs':>6} {'RAM':>10} {'CPU':>6} {'Share':>7}", DIM)
         head.append(f"   sorted by {arrow}" + (f"   search: {s.filter_text}" if s.filter_text else ""), "#7aa2d6")
         right = [head, Text("─" * rw, style=TRACK)]
 
@@ -93,7 +95,7 @@ class MemPanel(Panel):
             t = Text(no_wrap=True)
             t.append("▶ " if picked else "  ", "bold #ffffff")
             t.append("● ", color)
-            t.append(f"{name[:21]:<22}", FG)
+            t.append(f"{name[:name_w - 1]:<{name_w}}", FG)
             t.append(f"{('×' + str(count)) if count else '':>6} ", DIM)
             t.append(f"{fmt_gb(nbytes):>10} ", "bold")
             t.append(f"{(f'{cpu:.0f}%' if cpu is not None else ''):>6} ",
