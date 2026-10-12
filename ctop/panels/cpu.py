@@ -13,7 +13,7 @@ class CpuPanel(Panel):
         head = Text(no_wrap=True)
         head.append("Total ", DIM)
         head.append(f"{total:>3.0f}%", f"bold {grad(total / 100)}")
-        head.append("   last 5 minutes", DIM)
+        head.append(f"   last {s.history_minutes:g} min", DIM)
         left = [head] + graph(s.cpu_hist, 100, left_w, max(h - 1, 1), grad)
 
         half = (n + 1) // 2

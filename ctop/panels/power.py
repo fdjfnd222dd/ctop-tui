@@ -46,7 +46,7 @@ class BatPanel(Panel):
         room = h - len(lines) - 1
         if room >= 2:
             peak = max(max(s.watt_hist, default=0), 5.0)
-            lines.append(kv("", f"power over the last 5 min (top = {peak:.0f} W)", DIM, lw=0))
+            lines.append(kv("", f"power over the last {s.history_minutes:g} min (top = {peak:.0f} W)", DIM, lw=0))
             col = "#ff9e64" if status == "Discharging" else "#56d364"
             lines += graph(s.watt_hist, peak, w, room, lambda f: col)
         return lines

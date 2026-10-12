@@ -59,30 +59,35 @@ class MemPanel(Panel):
 
         # ---- right column: the programs (this is the ring's legend)
         rw = w - lw - 2
-        bar_w = max(0, min(26, rw - 3 - 22 - 7 - 11 - 8 - 4 - 10))
+        bar_w = max(0, min(26, rw - 3 - 22 - 7 - 11 - 7 - 8 - 4 - 10))
         head = Text(no_wrap=True)
-        head.append("   " + f"{'Program':<22}{'Procs':>6} {'RAM':>10} {'Share':>7}", DIM)
+        arrow = {"ram": "RAM", "cpu": "CPU", "name": "Program"}[s.sort_key]
+        head.append("   " + f"{'Program':<22}{'Procs':>6} {'RAM':>10} {'CPU':>6} {'Share':>7}", DIM)
+        head.append(f"   sorted by {arrow}" + (f"   search: {s.filter_text}" if s.filter_text else ""), "#7aa2d6")
         right = [head, Text("─" * rw, style=TRACK)]
 
         # scrolling window that always keeps the selected program in view
         n_rows = max(h - 3, 1)
         self.rows_visible = n_rows
-        names = [g[0] for g in groups]
+        shown = s.visible_groups()
+        names = [g.name for g in shown]
         if s.cursor in names:
             i = names.index(s.cursor)
             if i < self.first_row:
                 self.first_row = i
             elif i >= self.first_row + n_rows:
                 self.first_row = i - n_rows + 1
-        self.first_row = max(0, min(self.first_row, max(len(groups) - n_rows, 0)))
-        entries = [(n, b, c, self.prog_colors.get(n, OTHER_COLOR) if n in top_names else OTHER_COLOR)
-                   for n, b, c, _m in groups[self.first_row:self.first_row + n_rows]]
-        entries.append(("System & kernel", system, 0, SYSTEM_COLOR))
-        if groups:
+        self.first_row = max(0, min(self.first_row, max(len(shown) - n_rows, 0)))
+        entries = [(g.name, g.bytes, g.count, g.cpu,
+                    self.prog_colors.get(g.name, OTHER_COLOR) if g.name in top_names else OTHER_COLOR)
+                   for g in shown[self.first_row:self.first_row + n_rows]]
+        if not s.filter_text:
+            entries.append(("System & kernel", system, 0, None, SYSTEM_COLOR))
+        if shown or s.filter_text:
             where = names.index(s.cursor) + 1 if s.cursor in names else 0
-            self.border_subtitle = f"↑↓ select   x x stop   {where or '-'}/{len(groups)}"
+            self.border_subtitle = f"↑↓ select  x x stop  s sort  / search  Enter details   {where or '-'}/{len(shown)}"
 
-        for name, nbytes, count, color in entries:
+        for name, nbytes, count, cpu, color in entries:
             share = nbytes / total
             picked = name == s.cursor and count > 0
             t = Text(no_wrap=True)
@@ -91,6 +96,8 @@ class MemPanel(Panel):
             t.append(f"{name[:21]:<22}", FG)
             t.append(f"{('×' + str(count)) if count else '':>6} ", DIM)
             t.append(f"{fmt_gb(nbytes):>10} ", "bold")
+            t.append(f"{(f'{cpu:.0f}%' if cpu is not None else ''):>6} ",
+                     grad(min(cpu / 100, 1.0)) if cpu else DIM)
             t.append(f"{share * 100:>6.1f}% ", grad(share * 2.5))
             if bar_w >= 4:
                 t.append_text(meter(share, bar_w, lambda _t, c=color: c))

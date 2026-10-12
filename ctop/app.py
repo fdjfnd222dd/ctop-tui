@@ -7,7 +7,9 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
+from textual.screen import ModalScreen
 from textual.widgets import Static
+
 from ctop.panels.cpu import CpuPanel
 from ctop.panels.memory import MemPanel
 from ctop.panels.network import NetPanel
@@ -21,7 +23,41 @@ from ctop.ui import DIM, FG, Panel, fmt_gb
 # --------------------------------------------------------------------------
 ARM_SECONDS = 5.0      # how long the first 'x' stays armed
 MIN_GAP = 0.35         # second 'x' must come this much later (a held-down key must not kill)
-HINT = "↑/↓ or j/k select a program    x x stop it (asks twice; system programs are locked)    q quit"
+SPEEDS = [0.5, 1.0, 2.0, 5.0]   # refresh intervals the + / - keys step through (seconds)
+SORT_ORDER = ["ram", "cpu", "name"]
+SORT_WORDS = {"ram": "RAM (biggest first)", "cpu": "CPU (busiest first; 100% = one full core)",
+              "name": "name (A-Z)"}
+HINT = "↑/↓ select   x x stop   s sort   / search   space pause   +/- speed   ? help   q quit"
+
+HELP_TEXT = """\
+ ctop - keys
+
+   up / down  (or k / j)   choose a program in the list
+   PgUp / PgDn, Home / End jump
+   x  then  x              stop the chosen program (asks twice; system programs are locked)
+   s                       sort the list: RAM -> CPU -> name
+   /                       search by name  (Enter keeps it, Esc clears it)
+   space                   pause / resume the whole display
+   +  /  -                 refresh faster / slower (0.5 s, 1 s, 2 s, 5 s)
+   ?                       this help         q   quit
+
+ Numbers: RAM share uses PSS (shared memory is split fairly, so it adds up to your real RAM).
+ CPU is % of ONE core, like top: 100% means one core fully busy.
+
+ Press Esc, Enter or ? to close.
+"""
+
+
+class HelpScreen(ModalScreen):
+    BINDINGS = [("escape,enter,question_mark,q", "app.pop_screen", "Close")]
+    CSS = """
+    HelpScreen { align: center middle; background: #000000 60%; }
+    #help { width: 96; height: auto; padding: 1 2; background: #131820; border: round #4f8fd6; color: #d0d4da; }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Static(HELP_TEXT, id="help")
+
 
 
 class Ctop(App):
@@ -37,6 +73,12 @@ class Ctop(App):
         Binding("end", "jump(-1)", "Bottom", show=False),
         Binding("x", "kill", "Stop program"),
         Binding("escape", "cancel", "Cancel", show=False),
+        Binding("s", "sort", "Sort", show=False),
+        Binding("slash", "search", "Search", show=False),
+        Binding("space", "pause", "Pause", show=False),
+        Binding("plus,equals_sign", "speed(1)", "Faster", show=False),
+        Binding("minus", "speed(-1)", "Slower", show=False),
+        Binding("question_mark", "help", "Help", show=False),
     ]
     CSS = """
     Screen { background: #0c0e12; }
@@ -62,21 +104,74 @@ class Ctop(App):
 
     def on_mount(self):
         self.s = Sampler()
-        self.ticks = 0
+        self.speed_i = 1
+        self._last_procs = self._last_net = 0.0
         self.say(HINT, DIM)
         self.tick()
-        self.set_interval(1.0, self.tick)
+        self._timer = self.set_interval(SPEEDS[self.speed_i], self.tick)
+
+    def check_action(self, action, parameters):
+        # while typing a search, letters must go to the search box, not trigger shortcuts
+        if getattr(self, "s", None) and self.s.search_mode:
+            return False
+        return True
 
     def tick(self):
-        s = self.s
+        s, now = self.s, time.time()
+        if s.paused:
+            return
+        s.interval = SPEEDS[self.speed_i]
         s.sample_fast()
-        if self.ticks % 5 == 0 and not s.procs_busy:
+        # slow scans run on their own clock (seconds), whatever the refresh speed is
+        if now - self._last_procs >= 5 and not s.procs_busy:
+            self._last_procs = now
             threading.Thread(target=s.scan_procs, daemon=True).start()
-        if self.ticks % 15 == 0 and not s.net_busy:
+        if now - self._last_net >= 15 and not s.net_busy:
+            self._last_net = now
             threading.Thread(target=s.scan_net, daemon=True).start()
-        self.ticks += 1
         for panel in self.query(Panel):
             panel.draw(s)
+
+    # ---- sort / search / pause / speed / help
+    def action_sort(self):
+        s = self.s
+        s.sort_key = SORT_ORDER[(SORT_ORDER.index(s.sort_key) + 1) % len(SORT_ORDER)]
+        self.say(f"Sorted by {SORT_WORDS[s.sort_key]}", "#7aa2d6")
+        self.redraw_list()
+
+    def action_search(self):
+        self.disarm(quiet=True)
+        self.s.search_mode = True
+        self.show_search()
+
+    def show_search(self):
+        s = self.s
+        n = len(s.visible_groups())
+        self.say(f"Search: {s.filter_text}_    ({n} match{'es' if n != 1 else ''})    Enter keeps it   Esc clears it",
+                 "bold #7aa2d6")
+        names = [g.name for g in s.visible_groups()]
+        if s.cursor not in names:
+            s.cursor = names[0] if names else None
+        self.redraw_list()
+
+    def action_pause(self):
+        s = self.s
+        s.paused = not s.paused
+        self.say("PAUSED - the display is frozen. Press space to resume." if s.paused else HINT,
+                 "bold #f2cc60" if s.paused else DIM)
+
+    def action_speed(self, delta: int):
+        i = max(0, min(len(SPEEDS) - 1, self.speed_i - delta))     # + = faster = shorter interval
+        if i == self.speed_i:
+            self.say(f"Already at the {'fastest' if delta > 0 else 'slowest'} speed ({SPEEDS[i]:g} s).", DIM)
+            return
+        self.speed_i = i
+        self._timer.stop()
+        self._timer = self.set_interval(SPEEDS[i], self.tick)
+        self.say(f"Refreshing every {SPEEDS[i]:g} s", "#7aa2d6")
+
+    def action_help(self):
+        self.push_screen(HelpScreen())
 
     # ---- status line
     def say(self, text, style=FG):
@@ -95,7 +190,7 @@ class Ctop(App):
 
     def action_move(self, delta: int):
         self.disarm()
-        names = [g[0] for g in self.s.groups]
+        names = [g.name for g in self.s.visible_groups()]
         if not names:
             return
         i = names.index(self.s.cursor) if self.s.cursor in names else -1
@@ -105,7 +200,7 @@ class Ctop(App):
 
     def action_jump(self, where: int):
         self.disarm()
-        names = [g[0] for g in self.s.groups]
+        names = [g.name for g in self.s.visible_groups()]
         if names:
             self.s.cursor = names[where]
             self.redraw_list()
@@ -114,6 +209,28 @@ class Ctop(App):
         self.disarm()
 
     def on_key(self, event):
+        s = self.s
+        if s.search_mode:                                    # the search box owns the keyboard
+            event.stop()
+            event.prevent_default()
+            k = event.key
+            if k == "escape":
+                s.filter_text, s.search_mode = "", False
+                self.say(HINT, DIM)
+                self.redraw_list()
+                return
+            if k == "enter":
+                s.search_mode = False
+                self.say(f"Showing programs matching '{s.filter_text}'. Press / to edit, / then Esc to clear."
+                         if s.filter_text else HINT, "#7aa2d6" if s.filter_text else DIM)
+                self.redraw_list()
+                return
+            if k == "backspace":
+                s.filter_text = s.filter_text[:-1]
+            elif event.is_printable and event.character:
+                s.filter_text += event.character
+            self.show_search()
+            return
         # "any other key cancels" - x itself is handled by action_kill
         if event.key != "x":
             self.disarm()
@@ -122,12 +239,12 @@ class Ctop(App):
     def action_kill(self):
         s, now = self.s, time.time()
         name = s.cursor
-        group = next((g for g in s.groups if g[0] == name), None)
+        group = next((g for g in s.groups if g.name == name), None)
         if name is None or group is None:
             self.say("Pick a program first with ↑/↓ (or j/k), then press x twice.", "#f2cc60")
             s.cursor = None
             return
-        reason = kill_safety(name, group[3])
+        reason = kill_safety(name, group.members)
         if reason:
             s.armed = None
             self.say(f"Refused: {name} - {reason}. ctop will not stop it.", "bold #ff7b72")
@@ -141,8 +258,8 @@ class Ctop(App):
             return
         s.armed, s.armed_at = name, now
         what = "FORCE-KILL (cannot be saved)" if force else "Stop"
-        self.say(f"{what} {name}?  {group[2]} process{'es' if group[2] != 1 else ''}, "
-                 f"{fmt_gb(group[1])} of RAM. Unsaved work in it is lost.  "
+        self.say(f"{what} {name}?  {group.count} process{'es' if group.count != 1 else ''}, "
+                 f"{fmt_gb(group.bytes)} of RAM. Unsaved work in it is lost.  "
                  f"Press x again to confirm - any other key cancels.", "bold #ffffff on #6b1f1f")
         self.redraw_list()
         self.set_timer(ARM_SECONDS, self.arm_timeout)
@@ -153,7 +270,7 @@ class Ctop(App):
 
     def do_kill(self, name, group, force):
         s = self.s
-        members = group[3]
+        members = group.members
         sent = signal_members(members, signal.SIGKILL if force else signal.SIGTERM)
         s.armed = None
         s.term_sent[name] = time.time()
@@ -173,7 +290,6 @@ class Ctop(App):
                      f"Press x twice again to FORCE-kill it.", "#ff9e64")
         if not s.procs_busy:                                 # refresh the list right away
             threading.Thread(target=s.scan_procs, daemon=True).start()
-
 
 
 def main():

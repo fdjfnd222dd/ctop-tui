@@ -5,6 +5,7 @@ import struct
 import subprocess
 import time
 from collections import deque
+from typing import List, NamedTuple, Tuple
 
 import psutil
 from ctop.ui import HIST
@@ -131,6 +132,15 @@ def iface_kind(name):
     return "Other"
 
 
+class Group(NamedTuple):
+    """One program = all processes that share a name (every Firefox tab is one Group)."""
+    name: str
+    bytes: int            # real RAM cost (PSS-based, see read_proc_mem)
+    count: int            # how many processes
+    members: List[Tuple[int, float]]   # [(pid, start_time)] - what the kill safety net checks
+    cpu: float            # percent of ONE core, like top: 100 = one core fully busy
+
+
 class Sampler:
     """Holds every number the panels draw. Fast stats are sampled on the UI
     thread (they are cheap); slow scans run in background threads."""
@@ -147,7 +157,14 @@ class Sampler:
         # memory
         self.vm = psutil.virtual_memory()
         self.swap = psutil.swap_memory()
-        self.groups = []                            # [(name, bytes, count, [(pid, start)])] biggest first
+        self.groups = []                            # [Group] biggest RAM first (the ring always uses this)
+        self.sort_key = "ram"                       # how the list is ordered: ram | cpu | name
+        self.filter_text = ""                       # search box: keep programs whose name contains this
+        self.search_mode = False                    # True while the user is typing a search
+        self.paused = False
+        self.interval = 1.0                         # seconds between samples (the + / - keys change it)
+        self._cpu_prev = {}                         # (pid, start) -> total cpu seconds at last scan
+        self._scan_time = None
         self.cursor = None                          # program name currently selected
         self.armed = None                           # program waiting for the 2nd 'x'
         self.armed_at = 0.0
@@ -244,6 +261,8 @@ class Sampler:
         self.procs_busy = True
         try:
             groups, alive = {}, set()
+            now, cpu_prev = time.time(), {}
+            elapsed = (now - self._scan_time) if self._scan_time else None
             for p in psutil.process_iter():
                 try:
                     key = (p.pid, p.create_time())  # create_time guards against pid reuse
@@ -253,19 +272,46 @@ class Sampler:
                 except psutil.Error:
                     continue
                 alive.add(key)
+                try:                                # CPU use = change in used CPU-seconds / elapsed time
+                    ct = p.cpu_times()
+                    used = ct.user + ct.system
+                    cpu_prev[key] = used
+                    before = self._cpu_prev.get(key)
+                    cpu = max(used - before, 0) / elapsed * 100 if before is not None and elapsed else 0.0
+                except psutil.Error:
+                    cpu = 0.0
                 mem = read_proc_mem(p.pid)
                 if mem <= 0:                        # kernel threads cost no user RAM
                     continue
-                g = groups.setdefault(name, [0, 0, []])
+                g = groups.setdefault(name, [0, 0, [], 0.0])
                 g[0] += mem
                 g[1] += 1
                 g[2].append(key)                    # (pid, start time) - used by the kill safety net
+                g[3] += cpu
             for key in set(self._names) - alive:    # forget processes that exited
                 del self._names[key]
-            self.groups = sorted(((n, v[0], v[1], v[2]) for n, v in groups.items()),
-                                 key=lambda x: -x[1])
+            self._cpu_prev, self._scan_time = cpu_prev, now
+            self.groups = sorted((Group(n, v[0], v[1], v[2], v[3]) for n, v in groups.items()),
+                                 key=lambda x: -x.bytes)
         finally:
             self.procs_busy = False
+
+    @property
+    def history_minutes(self):
+        """How much time the graphs cover at the current refresh speed."""
+        return round(HIST * self.interval / 60, 1)
+
+    def visible_groups(self):
+        """The program list as the user sees it: filtered by the search box, then sorted."""
+        g = self.groups
+        if self.filter_text:
+            needle = self.filter_text.lower()
+            g = [x for x in g if needle in x.name.lower()]
+        if self.sort_key == "cpu":
+            g = sorted(g, key=lambda x: (-x.cpu, -x.bytes))
+        elif self.sort_key == "name":
+            g = sorted(g, key=lambda x: x.name.lower())
+        return list(g)
 
     def scan_net(self):
         self.net_busy = True
