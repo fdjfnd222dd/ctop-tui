@@ -67,6 +67,16 @@ locked. The categories are:
 - Stop anything from a stale list while the display is paused. Resume first with space.
 - Stop anything without the double press.
 
+## Network changes
+
+The Network page can change network settings. These are the rules for that:
+
+- Every change is picked in an arrow-key menu; disconnecting, forgetting, Wi-Fi off, reconnecting and DNS changes ask a second time.
+- All changes go through `ctop/netctl.py`, which runs `nmcli` (and `tailscale up/down`) as you. NetworkManager's own polkit rules decide what is allowed; ctop never uses root.
+- Every value is checked before it is used, and commands never go through a shell.
+- Wi-Fi passwords are passed to NetworkManager on standard input, never on a command line where other users could read them. If the password is wrong, the half-made profile is deleted.
+- ctop never changes the hostname, never turns all networking off (airplane mode keeps cables working), and never edits the firewall or system files.
+
 ## Report a program that should be locked
 
 If ctop let you stop something that should be protected, or you think a program should be on the

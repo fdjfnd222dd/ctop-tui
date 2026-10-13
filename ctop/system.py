@@ -2,7 +2,6 @@
 import os
 import socket
 import struct
-import subprocess
 import time
 from collections import deque
 from typing import List, NamedTuple, Tuple
@@ -304,7 +303,7 @@ class Sampler:
         try:
             iface, gw = default_route()
             info = {"iface": iface, "gateway": gw, "dns": [], "ip": None,
-                    "ssid": None, "signal": None, "rate": None, "ifaces": []}
+                    "ifaces": []}
             try:
                 with open("/etc/resolv.conf") as f:
                     info["dns"] = [l.split()[1] for l in f if l.startswith("nameserver")]
@@ -319,18 +318,6 @@ class Sampler:
                 info["ifaces"].append((name, iface_kind(name), up, v4))
                 if name == iface:
                     info["ip"] = v4
-            try:                                    # Wi-Fi name / strength from NetworkManager
-                out = subprocess.run(
-                    ["nmcli", "--escape", "no", "-t", "-f", "IN-USE,SSID,SIGNAL,RATE", "dev", "wifi"],
-                    capture_output=True, text=True, timeout=4).stdout
-                for line in out.splitlines():
-                    if line.startswith("*:"):
-                        head, signal, rate = line[2:].rsplit(":", 2)
-                        info["ssid"], info["signal"] = head, int(signal)
-                        info["rate"] = rate.replace("Mbit/s", "").strip()
-                        break
-            except (OSError, ValueError, subprocess.SubprocessError):
-                pass
             self.net = info
         finally:
             self.net_busy = False

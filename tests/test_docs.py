@@ -88,7 +88,7 @@ class TestReadme(unittest.TestCase):
 
     def test_readme_key_table_matches(self):
         text = read("README.md")
-        for row in ("| `Tab`, `1`, `2` |", "| `Enter` |", "| `s` |", "| `/` |",
+        for row in ("| `Tab`, `1`, `2`, `3` |", "| `Enter` |", "| `s` |", "| `/` |",
                     "| `space` |", "| `+` `-` |", "| `?` |", "| `q` |"):
             self.assertIn(row, text)
 

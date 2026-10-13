@@ -107,3 +107,11 @@ Open an issue and include:
 - which panels were empty or wrong.
 
 Mask IP addresses, Wi-Fi names, usernames and hostnames before you paste anything.
+
+## Network page on Debian
+
+- Every Debian desktop install has NetworkManager. nmcli 1.42 (Debian 12) and 1.52 (Debian 13) both work.
+- A user logged in at the desktop may change Wi-Fi by default. Over SSH, or on a minimal install, polkit may refuse; the page then shows the reason and the tools still work.
+- No NetworkManager at all (server, `ifupdown` only): the Wi-Fi and Saved boxes say so; trace, ports, DNS timing, speed test and the doctor still work.
+- `iw` is optional (it adds the link details): `sudo apt install iw`.
+- Tracing needs nothing extra. If the built-in way is unavailable it falls back to `tracepath` (package `iputils-tracepath`).

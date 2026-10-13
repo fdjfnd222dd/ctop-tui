@@ -14,15 +14,21 @@ from ctop.alerts import AlertInput, evaluate
 from ctop.collectors.details import program_detail
 from ctop.demo import DemoSampler, demo_detail, make_demo_collectors
 from ctop.collectors.firewall import FirewallCollector
+from ctop.collectors.nmstate import NmCollector
+from ctop.collectors.vpn import VpnCollector
+from ctop.collectors.wifilink import LinkCollector, channel_report
 from ctop.collectors.lan import LanCollector
 from ctop.collectors.ping import PingCollector
 from ctop.collectors.ports import PortsCollector
 from ctop.collectors.thermal import ThermalCollector
 from ctop.collectors.wifi import WifiCollector
 from ctop.models import FirewallInfo, SecurityData
+from ctop.netevents import EventLog
+from ctop.netpage import NetPageMixin, NetUI
 from ctop.panels.cpu import CpuPanel
 from ctop.panels.memory import MemPanel
 from ctop.panels.network import NetPanel
+from ctop.panels.network_page import EventsBox, LinkBox, SavedBox, ToolsBox, WifiBox
 from ctop.panels.power import BatPanel
 from ctop.panels.security import ConnPanel, DevicesPanel, ExposedPanel, PortsPanel
 from ctop.render.alerts import banner
@@ -41,19 +47,21 @@ SORT_ORDER = ["ram", "cpu", "name"]
 SORT_WORDS = {"ram": "RAM (biggest first)", "cpu": "CPU (busiest first; 100% = one full core)",
               "name": "name (A-Z)"}
 SORT_TAG = {"ram": "RAM", "cpu": "CPU", "name": "name"}
-PAGE_NAMES = {1: "1 Overview", 2: "2 Security"}
+PAGE_NAMES = {1: "1 Overview", 2: "2 Security", 3: "3 Network"}
 HINTS = {
-    1: "↑/↓ select  Enter details  x x stop  s sort  / search  Tab security  space pause  ? help  q quit",
-    2: "Tab or 1/2 switch page   space pause   +/- speed   ? help   q quit",
+    1: "↑/↓ select  Enter details  x x stop  s sort  / search  Tab next page  space pause  ? help  q quit",
+    2: "Tab or 1/2/3 switch page   space pause   +/- speed   ? help   q quit",
+    3: "",                     # page 3 has its own key bar; this line is only for messages
 }
 # seconds between refreshes of each collector while its page is in front / out of sight
-FOREGROUND = {"ports": 5.0, "lan": 10.0, "firewall": 30.0}
-BACKGROUND = {"ports": 30.0, "lan": 60.0, "firewall": 120.0}
+PAGE_OF = {"ports": 2, "lan": 2, "firewall": 2, "nmstate": 3, "wifilink": 3, "vpn": 3}
+FOREGROUND = {"ports": 5.0, "lan": 10.0, "firewall": 30.0, "nmstate": 8.0, "wifilink": 5.0, "vpn": 15.0}
+BACKGROUND = {"ports": 30.0, "lan": 60.0, "firewall": 120.0, "nmstate": 60.0, "wifilink": 30.0, "vpn": 60.0}
 
 HELP_TEXT = """\
  ctop - keys
 
-   Tab, 1, 2               switch page: 1 Overview, 2 Security (ports, connections, devices, firewall)
+   Tab, 1, 2, 3            switch page: 1 Overview, 2 Security (ports, connections, devices), 3 Network
    up / down  (or k / j)   choose a program in the list      PgUp / PgDn, Home / End   jump
    Enter                   details of the chosen program (processes, open connections, listening ports)
    x  then  x              stop the chosen program (asks twice; system programs are locked)
@@ -66,6 +74,10 @@ HELP_TEXT = """\
  Numbers: RAM share uses PSS (shared memory is split fairly, so it adds up to your real RAM).
  CPU is % of ONE core, like top: 100% means one core fully busy.
  Nothing is ever scanned: the Security page only reads what this computer already knows.
+
+ Network page (3):  left / right  pick a box (Wi-Fi, Saved, Tools)    up / down  choose    Enter  menu or run
+   r rescan Wi-Fi    t trace & ports    d network doctor    w Wi-Fi on/off    Esc stop a running tool
+   Every change asks first. Tools send traffic only when you start them.
 
  Press Esc, Enter or ? to close.
 """
@@ -167,7 +179,7 @@ class DetailScreen(ModalScreen):
 # --------------------------------------------------------------------------
 # The app
 # --------------------------------------------------------------------------
-class Ctop(App):
+class Ctop(NetPageMixin, App):
     TITLE = "ctop"
     BINDINGS = [
         Binding("q", "quit", "Quit"),
@@ -175,6 +187,13 @@ class Ctop(App):
         Binding("tab", "next_page", "Page", show=False, priority=True),
         Binding("1", "page(1)", "Overview", show=False),
         Binding("2", "page(2)", "Security", show=False),
+        Binding("3", "page(3)", "Network", show=False),
+        Binding("left,h", "net_focus(-1)", "Box left", show=False),
+        Binding("right,l", "net_focus(1)", "Box right", show=False),
+        Binding("r", "net_key('rescan')", "Rescan", show=False),
+        Binding("t", "net_key('target')", "Trace", show=False),
+        Binding("d", "net_key('doctor')", "Doctor", show=False),
+        Binding("w", "net_key('wifi')", "Wi-Fi", show=False),
         Binding("up,k", "move(-1)", "Up", show=False),
         Binding("down,j", "move(1)", "Down", show=False),
         Binding("pageup", "move(-10)", "Page up", show=False),
@@ -196,8 +215,18 @@ class Ctop(App):
     Panel { height: 100%; padding: 0 1; background: #0c0e12; color: #d0d4da; overflow: hidden;
             border-title-style: bold; border-subtitle-color: #7d8590; }
     #alerts { height: 1; display: none; }
-    #page1, #page2 { height: 1fr; }
-    #page2 { display: none; }
+    #page1, #page2, #page3 { height: 1fr; }
+    #page2, #page3 { display: none; }
+    #netA { height: 1fr; min-height: 12; }
+    #netB { height: 1fr; min-height: 15; }
+    #netright { width: 2fr; min-width: 46; }
+    #netkeys { height: 1; padding: 0 1; background: #161b26; }
+    #net-wifi { width: 3fr; border: round #39c5cf; border-title-color: #39c5cf; }
+    #net-saved { width: 2fr; border: round #4f8fd6; border-title-color: #4f8fd6; }
+    #net-tools { width: 3fr; border: round #bc8cff; border-title-color: #bc8cff; }
+    #net-link { height: 11; border: round #5fa86b; border-title-color: #5fa86b; }
+    #net-events { height: 1fr; border: round #d9a441; border-title-color: #d9a441; }
+    #net-wifi.focus, #net-saved.focus, #net-tools.focus { border: heavy #e6edf3; border-title-color: #e6edf3; }
     #top { height: 13; }
     #bottom { height: 1fr; }
     #secA { height: 17; }
@@ -231,6 +260,16 @@ class Ctop(App):
             with Horizontal(id="secB"):
                 yield DevicesPanel("Devices on your network", id="sec-lan")
                 yield ExposedPanel("How exposed am I?", id="sec-exposed")
+        with Vertical(id="page3"):
+            with Horizontal(id="netA"):
+                yield WifiBox("Wi-Fi networks", id="net-wifi")
+                yield SavedBox("Saved networks & VPN", id="net-saved")
+            with Horizontal(id="netB"):
+                yield ToolsBox("Tools", id="net-tools")
+                with Vertical(id="netright"):
+                    yield LinkBox("Your Wi-Fi link", id="net-link")
+                    yield EventsBox("Events", id="net-events")
+            yield Static(id="netkeys")
         with Horizontal(id="statusrow"):
             yield Static(id="status")
             yield Static(id="tags")
@@ -258,11 +297,58 @@ class Ctop(App):
             self.ports = PortsCollector()
             self.lan = LanCollector()
             self.firewall = FirewallCollector()
-        self.collectors = [self.thermal, self.ping, self.wifi, self.ports, self.lan, self.firewall]
+        self.setup_network()
+        self.collectors = [self.thermal, self.ping, self.wifi, self.ports, self.lan, self.firewall,
+                           self.nmstate, self.wifilink, self.vpn]
         self.query_one("#sec-lan").border_subtitle = "passive: nothing is scanned"
         self.set_page(1)
         self.tick()
         self._timer = self.set_interval(SPEEDS[self.speed_i], self.tick)
+
+    def setup_network(self):
+        """Page 3: its collectors, the change layer and the tools (fakes in demo mode)."""
+        s = self.s
+        s.netui, s.events = NetUI(), EventLog()
+        s.nm = s.link = s.vpn = s.chan = None
+        self._chan_key = None
+        if self.demo:
+            from ctop import demo_net
+            fake = demo_net.make_demo_net_collectors()
+            self.nmstate, self.wifilink, self.vpn = fake["nmstate"], fake["wifilink"], fake["vpn"]
+            self.ctl = demo_net.DemoNetctl()
+            fns = {"trace": demo_net.demo_trace, "ports": demo_net.demo_ports, "dns": demo_net.demo_dns,
+                   "speed": demo_net.demo_speed, "doctor": demo_net.demo_doctor, "lan": demo_net.demo_lanscan}
+        else:
+            from ctop import netctl
+            from ctop.tools import dnscheck, doctor, lanscan, portcheck, speedtest, trace
+            self.nmstate, self.wifilink, self.vpn = NmCollector(), LinkCollector(), VpnCollector()
+            self.ctl = netctl
+            fns = {"trace": trace.run_trace, "ports": portcheck.run_ports, "dns": dnscheck.run_dns,
+                   "speed": speedtest.run_speed, "doctor": doctor.run_doctor, "lan": lanscan.run_lanscan}
+        from ctop.tools.portcheck import PRESETS, parse_ports
+        fns["presets"], fns["parse_ports"] = PRESETS, parse_ports
+        self.tool_fns = fns
+
+    def update_network(self, now):
+        s = self.s
+        s.nm, s.link, s.vpn = self.nmstate.data, self.wifilink.data, self.vpn.data
+        key = (id(s.nm), id(s.link))
+        if key != self._chan_key and s.nm is not None:
+            self._chan_key = key
+            s.chan = channel_report(s.nm.networks, s.link)
+        s.events.observe(now, wifi=s.wifi, link=s.link, ping=s.ping, net=s.net or None, nm=s.nm, vpn=s.vpn)
+        if self.page == 3:
+            nm = s.nm
+            box = self.query_one("#net-wifi")
+            if nm and nm.available and nm.networks:
+                box.border_subtitle = f"{min(s.netui.cursor['wifi'] + 1, len(nm.networks))}/{len(nm.networks)}  r rescan"
+            else:
+                box.border_subtitle = ""
+            self.query_one("#net-tools").border_subtitle = "Esc stops it" if s.netui.running else ""
+
+    def on_resize(self, event):
+        if getattr(self, "s", None) is not None and getattr(self.s, "netui", None) is not None:
+            self.net_keybar()
 
     def check_action(self, action, parameters):
         # while typing a search, letters must go to the search box, not trigger shortcuts
@@ -290,6 +376,7 @@ class Ctop(App):
                 threading.Thread(target=c.run, daemon=True).start()
         s.ping, s.wifi = self.ping.data, self.wifi.data
         self.update_security(now)
+        self.update_network(now)
         self.update_alerts()
         self.draw_page()
 
@@ -325,8 +412,13 @@ class Ctop(App):
         self.page = n
         self.query_one("#page1").display = n == 1
         self.query_one("#page2").display = n == 2
-        for name, c in (("ports", self.ports), ("lan", self.lan), ("firewall", self.firewall)):
-            c.interval = (FOREGROUND if n == 2 else BACKGROUND)[name]
+        self.query_one("#page3").display = n == 3
+        for c in (self.ports, self.lan, self.firewall, self.nmstate, self.wifilink, self.vpn):
+            c.interval = (FOREGROUND if PAGE_OF[c.name] == n else BACKGROUND)[c.name]
+            if PAGE_OF[c.name] == n and c.data is None:
+                c.last_run = 0.0                     # first visit: fetch now, not at the slow interval
+        if n == 3:
+            self.net_set_focus(self.s.netui.focus)
         self.say(HINTS[n], DIM)
         self.refresh_tags()
         self.call_after_refresh(self.draw_page)
@@ -335,7 +427,7 @@ class Ctop(App):
         if len(self.screen_stack) > 1:           # a pop-up is open: leave the page behind it alone
             return
         self.disarm(quiet=True)
-        self.set_page(2 if self.page == 1 else 1)
+        self.set_page(self.page % 3 + 1)
 
     def action_page(self, n: int):
         if n != self.page:
@@ -428,7 +520,18 @@ class Ctop(App):
                 self.say(HINTS[self.page], DIM)
             self.redraw_list()
 
+    def action_net_focus(self, delta: int):
+        if self.page == 3:
+            self.net_focus_step(delta)
+
+    def action_net_key(self, key: str):
+        if self.page == 3:
+            self.run_menu_item(key)
+
     def action_move(self, delta: int):
+        if self.page == 3:
+            self.net_move(delta)
+            return
         if self.page != 1:
             return
         self.disarm()
@@ -441,6 +544,9 @@ class Ctop(App):
         self.redraw_list()
 
     def action_jump(self, where: int):
+        if self.page == 3:
+            self.net_move(0, jump=where)
+            return
         if self.page != 1:
             return
         self.disarm()
@@ -450,9 +556,15 @@ class Ctop(App):
             self.redraw_list()
 
     def action_cancel(self):
+        if self.page == 3:
+            self.net_escape()
+            return
         self.disarm()
 
     def action_details(self):
+        if self.page == 3:
+            self.net_enter()
+            return
         if self.page != 1:
             return
         name = self.s.cursor
@@ -561,7 +673,7 @@ class Ctop(App):
 def main(argv=None):
     import argparse
     from ctop import __version__
-    ap = argparse.ArgumentParser(prog="ctop", description="A btop-style terminal dashboard (read-only).")
+    ap = argparse.ArgumentParser(prog="ctop", description="A btop-style terminal dashboard.")
     ap.add_argument("--demo", action="store_true",
                     help="run with made-up numbers (safe to try; reads nothing, stops nothing)")
     ap.add_argument("--version", action="version", version=f"ctop {__version__}")

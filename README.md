@@ -9,7 +9,7 @@
 
 ![ctop overview](docs/screenshots/overview.png)
 
-ctop shows which programs are eating your RAM (as a ring chart, in GB and %), how fast your battery is draining (in watts, and how long it will last), how healthy your network is (in ms and Mbps), and who can reach your computer. When something is out of hand, select it and press `x` twice to stop it, with a safety net that refuses to touch anything important. It is read-only otherwise: no root, no telemetry, and it never scans your network.
+ctop shows which programs are eating your RAM (as a ring chart, in GB and %), how fast your battery is draining (in watts, and how long it will last), how healthy your network is (in ms and Mbps), and who can reach your computer. When something is out of hand, select it and press `x` twice to stop it, with a safety net that refuses to touch anything important. The Network page (`3`) lets you pick Wi-Fi with the arrow keys, manage saved networks, switch DNS and run network tools. Every change asks first and nothing needs root. Otherwise ctop is read-only: no telemetry, and it sends traffic only when you start a tool.
 
 ## Features
 
@@ -21,6 +21,8 @@ ctop shows which programs are eating your RAM (as a ring chart, in GB and %), ho
 | **Network** | Download and upload in Mbps, ping to your router and the internet, Wi-Fi signal quality, your IP, gateway, DNS and interfaces. |
 | **Security page** | Which programs accept connections and from whom, who your computer is talking to, devices on your network, the firewall state, and a plain-English "How exposed am I?". |
 | **Program details** | Press `Enter` on a program to see its processes, open connections and listening ports. |
+| **Network page** | Nearby Wi-Fi with signal bars (arrow keys, `Enter` to connect), saved networks (auto-connect, priority, DNS, forget), Tailscale and VPN status, your Wi-Fi link (band, channel width, Wi-Fi generation, real link speed, private MAC), channel crowding tips, and an event log of drops, roaming, IP changes and lag spikes. |
+| **Network tools** | Network doctor (finds where the connection breaks), Trace & ports (a traceroute map to any address plus a check of the ports you pick), speed test with lag under load, DNS timing, and Find devices on your home network. |
 | **Alert banner** | One line at the top when RAM, swap, battery, heat, a fan, Wi-Fi or ping needs attention. |
 
 <table>
@@ -59,7 +61,7 @@ Only the first line uses sudo. `install.sh` never does: it puts ctop in a privat
 
 | Key | What it does |
 |---|---|
-| `Tab`, `1`, `2` | switch page: 1 Overview, 2 Security |
+| `Tab`, `1`, `2`, `3` | switch page: 1 Overview, 2 Security, 3 Network |
 | `↑` `↓` or `j` `k` | select a program (`PgUp` `PgDn` `Home` `End` jump) |
 | `Enter` | details of the selected program |
 | `x` then `x` | stop the selected program (asks twice; system programs are locked) |
@@ -69,6 +71,19 @@ Only the first line uses sudo. `install.sh` never does: it puts ctop in a privat
 | `+` `-` | refresh faster / slower (0.5 s, 1 s, 2 s, 5 s) |
 | `?` | help |
 | `q` | quit |
+
+**On the Network page** a key bar at the bottom always shows what you can do:
+
+| Key | What it does |
+|---|---|
+| `←` `→` | move between the Wi-Fi, Saved and Tools boxes |
+| `↑` `↓` | choose a network, profile or tool |
+| `Enter` | open the menu for it (connect, forget, DNS, ...) or run the tool |
+| `r` | rescan Wi-Fi |
+| `t` | Trace & ports: type an address, pick ports, see the path |
+| `d` | network doctor |
+| `w` | Wi-Fi on / off |
+| `Esc` | stop a running tool |
 
 ## Why I built it
 
@@ -88,6 +103,13 @@ Stopping a program is the only thing ctop can change, and it is fenced in:
 - It needs two deliberate presses of `x`, and holding the key down does not count.
 - Desktop, login, audio, network, power, firewall and terminal programs are locked, across KDE, GNOME, XFCE, Cinnamon, MATE, LXQt and the common tiling window managers. So are ctop itself and the terminal it runs in.
 - It only ever stops your own programs, never root's or another user's, and never uses root.
+
+Network changes (connect, disconnect, forget, auto-connect, priority, DNS, Wi-Fi and airplane mode, Tailscale) are the other thing ctop can change:
+
+- Each one is picked in a menu, and anything that can drop your connection asks a second time.
+- They go through NetworkManager as you, the same way your desktop's Wi-Fi menu does. No root.
+- A Wi-Fi password is handed to NetworkManager privately, never put on a command line. A wrong password leaves no half-made profile behind.
+- Airplane mode turns radios off but keeps a network cable working. ctop never changes your hostname, firewall or system files.
 - If any process in a group is locked, the whole group is refused.
 - A stop is polite first (SIGTERM). A force-kill is offered only if the program is still alive afterwards.
 
@@ -95,7 +117,8 @@ Details, and the full list of locked names, are in [docs/SAFETY.md](docs/SAFETY.
 
 ## Privacy
 
-- ctop is read-only. It writes no files and sends no telemetry.
+- ctop writes no files and sends no telemetry.
+- The Network page tools send traffic only when you start one: Trace sends small UDP probes toward the address you type; Ports opens a TCP connection to each port you pick (at most 32) and sends nothing over it; DNS timing sends a few lookups to your DNS servers and to Cloudflare, Quad9 and Google; the speed test uses about 35 MB with Cloudflare's speed test; the doctor pings your router and asks NetworkManager to re-check internet access; Find devices sends one empty packet to each address of your own private network (at most 254).
 - The only packets it sends are a few small pings: one to your router and one to a public internet address (`DEFAULT_TARGET` in `ctop/collectors/ping.py`). Change it with `CTOP_PING_TARGET`, or turn the internet ping off with `CTOP_NO_PING=1`.
 - It never scans your network. "Devices" comes from the kernel's neighbour table: the devices your computer has already talked to recently.
 - No reverse-DNS lookups and no "what is my public IP" services.
@@ -112,6 +135,9 @@ Details, and the full list of locked names, are in [docs/SAFETY.md](docs/SAFETY.
 | Wi-Fi line missing | you are not on Wi-Fi, or install `network-manager` (for `nmcli`) or `iw` |
 | firewall: "could not tell" | reading firewall rules needs root; ctop never asks for it |
 | `(other user)` in the ports table | that program belongs to another user |
+| Network page: "NetworkManager not found" | Wi-Fi controls need NetworkManager (`sudo apt install network-manager`); the tools still work |
+| Network page: "NetworkManager refused (polkit)" | your account may not change network settings here (common over SSH); use the desktop session |
+| Doctor: "Every lookup waits 5 s" | your router or DNS filter drops the IPv6 half of each lookup; adding `options single-request-reopen` to the resolver settings, or another DNS, fixes it |
 
 ## Requirements
 

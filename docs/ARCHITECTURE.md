@@ -14,8 +14,8 @@ Two layers that only meet through `ctop/models.py`:
 ```
 
 ## Principles (every module must follow these)
-1. **Read-only.** No writes to /sys, /proc, /etc. No root. No sudo. Never kill anything except through `safety.py`.
-2. **Passive.** No port scans, no ARP sweeps, no sending packets except the two ping targets in `collectors/ping.py`. No lookups that leak (no reverse DNS, no "what is my public IP" services).
+1. **Read-only, with two fenced exceptions.** No writes to /sys, /proc, /etc. No root. No sudo. Programs are stopped only through `safety.py`; network settings are changed only through `netctl.py` (nmcli as the user, after a menu choice).
+2. **Passive unless asked.** Background code sends nothing except the two ping targets in `collectors/ping.py`. The tools in `ctop/tools/` (trace, port check, DNS timing, speed test, doctor, device finder) run only when the user starts one, have hard limits (32 ports, 254 addresses, 30 hops) and stop on Esc. No lookups that leak (no reverse DNS, no "what is my public IP" services).
 3. **Cheap.** ctop measures the battery it runs on. A collector refresh should cost well under 20 ms of CPU; every subprocess has a `timeout=`; nothing runs faster than its `interval`.
 4. **Degrade, never crash.** Missing tool / file / permission => the field is `None` (see models.py) and the UI says so in plain words. No traceback may reach the screen.
 5. **Portable.** Python >= 3.9 (Debian 11+ ships 3.9). Only `psutil`, `rich`, `textual` plus the standard library. Assume nothing about KDE, Arch, Dell, or one particular battery/Wi-Fi driver. Linux only.
@@ -60,3 +60,14 @@ Standard library `unittest`, one file per task in `tests/`, runnable with
 | T17 | Alert banner line | `ctop/render/alerts.py`, `tests/test_render_alerts.py` |
 
 Wiring (scheduler, pages, keys, popup screen, sort/search/pause) is done by the maintainer in `ctop/app.py` after the tasks land.
+| T18 | NetworkManager state: radios, nearby Wi-Fi, saved profiles | `ctop/collectors/nmstate.py` |
+| T19 | Network changes (the only module that changes settings) | `ctop/netctl.py` |
+| T20 | Wi-Fi link details + channel crowding | `ctop/collectors/wifilink.py` |
+| T21 | VPN / Tailscale status | `ctop/collectors/vpn.py` |
+| T22 | Network event log | `ctop/netevents.py` |
+| T23-T28 | Tools: trace, port check, DNS timing, speed test, doctor, device finder | `ctop/tools/*.py` |
+| T29 | Network page renderers | `ctop/render/net_wifi.py`, `ctop/render/net_tools.py` |
+| T30 | Arrow-key menus, input and target dialogs | `ctop/screens.py` |
+| T31 | Demo data for the Network page | `ctop/demo_net.py` |
+
+Page 3 wiring (focus, menus, tool threads, key bar) lives in `ctop/netpage.py`, mixed into the app; its boxes are in `ctop/panels/network_page.py`. Specs: `docs/specs/T18`-`T32` and `NETWORK-PAGE.md`.
