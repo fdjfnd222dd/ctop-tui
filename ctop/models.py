@@ -170,3 +170,241 @@ class Alert:
     level: str                         # "info" | "warn" | "crit"
     key: str                           # stable id, e.g. "ram-high", "battery-low"
     text: str                          # one short plain-English sentence
+
+
+# ---- network page (page 3) -------------------------------------------------
+# Everything below is shown on the Network page. Collectors in ctop/collectors/
+# (nmstate, wifilink, vpn) and the on-demand tools in ctop/tools/ build these.
+@dataclass(frozen=True)
+class WifiNetwork:
+    """One SSID seen in the last Wi-Fi scan (several access points of one SSID are merged)."""
+    ssid: str                          # "" = hidden network
+    bssid: str                         # strongest access point, upper case "AA:BB:CC:DD:EE:FF"
+    channel: Optional[int]
+    freq_mhz: Optional[int]
+    band: str                          # "2.4 GHz" | "5 GHz" | "6 GHz" | "?"
+    rate_mbps: Optional[int]           # the access point's maximum rate
+    signal_pct: Optional[int]          # 0-100
+    security: str                      # "WPA2", "WPA WPA2", "WPA3", "802.1X", ... ; "" = open network
+    in_use: bool                       # this computer is connected to it right now
+    saved: bool                        # a saved profile exists for this SSID
+    aps: int = 1                       # how many access points broadcast this SSID (mesh / extenders)
+
+
+@dataclass(frozen=True)
+class SavedConnection:
+    """One NetworkManager profile (a remembered Wi-Fi, a cable, a VPN...)."""
+    name: str
+    uuid: str
+    kind: str                          # "wifi" | "ethernet" | "vpn" | "wireguard" | "other"
+    device: Optional[str]              # interface it is active on, None when inactive
+    active: bool
+    state: str                         # "activated" | "activating" | "deactivating" | "" when inactive
+    autoconnect: bool
+    priority: int                      # higher wins when several saved networks are in range
+    last_used: Optional[float]         # epoch seconds, None = never
+    ssid: Optional[str] = None         # Wi-Fi profiles only; may differ from `name`
+
+
+@dataclass(frozen=True)
+class NmState:
+    """What NetworkManager knows: radios, nearby networks, saved profiles."""
+    available: bool                    # False: no nmcli / NetworkManager not running
+    reason: str = ""                   # plain words for the page when not available
+    wifi_enabled: Optional[bool] = None
+    wifi_hw: Optional[bool] = None     # False = hardware switch / rfkill block
+    wwan_enabled: Optional[bool] = None
+    state: str = ""                    # nmcli general STATE: "connected", "disconnected", "asleep", ...
+    connectivity: str = ""             # "full" | "limited" | "portal" | "none" | "unknown"
+    wifi_device: Optional[str] = None  # e.g. "wlan0", None = no Wi-Fi hardware
+    networks: Tuple[WifiNetwork, ...] = ()     # in-use first, then strongest first
+    saved: Tuple[SavedConnection, ...] = ()    # active first, then most recently used
+    scanned_at: float = 0.0            # time.time() of this snapshot
+
+
+@dataclass(frozen=True)
+class LinkInfo:
+    """Details of the Wi-Fi link this computer is on (from `iw` and /sys)."""
+    iface: str
+    connected: bool
+    bssid: Optional[str] = None        # the access point you are attached to
+    freq_mhz: Optional[int] = None
+    channel: Optional[int] = None
+    band: str = "?"
+    width_mhz: Optional[int] = None    # 20 / 40 / 80 / 160 / 320
+    signal_dbm: Optional[int] = None
+    rx_mbps: Optional[float] = None
+    tx_mbps: Optional[float] = None
+    standard: Optional[str] = None     # "Wi-Fi 4" (HT) | "Wi-Fi 5" (VHT) | "Wi-Fi 6" (HE) | "Wi-Fi 7" (EHT) | None
+    tx_power_dbm: Optional[float] = None
+    mac: Optional[str] = None
+    random_mac: Optional[bool] = None  # locally administered address = privacy MAC
+    mtu: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class ChannelLoad:
+    band: str                          # "2.4 GHz" | "5 GHz" | "6 GHz"
+    channel: int
+    networks: int                      # access points heard on this channel
+    strongest_pct: int                 # strongest of them, 0-100
+    mine: bool                         # the network you are on uses this channel
+
+
+@dataclass(frozen=True)
+class ChannelReport:
+    loads: Tuple[ChannelLoad, ...] = ()        # sorted by band, then channel
+    tip: str = ""                      # one plain sentence, "" when nothing useful to say
+
+
+@dataclass(frozen=True)
+class VpnPeer:
+    name: str
+    ip: Optional[str]
+    os: str
+    online: bool
+    exit_node: bool                    # traffic is going out through this peer right now
+
+
+@dataclass(frozen=True)
+class VpnTunnel:
+    name: str                          # interface name, e.g. "wg0", "tun0", "tailscale0"
+    kind: str                          # "WireGuard" | "Tailscale" | "OpenVPN/tun" | "VPN"
+    up: bool
+    ip: Optional[str]
+
+
+@dataclass(frozen=True)
+class VpnStatus:
+    tailscale: Optional[str] = None    # None = not installed; "Running" | "Stopped" | "NeedsLogin" | "Starting" | ...
+    tailscale_ip: Optional[str] = None
+    tailnet: Optional[str] = None
+    peers: Tuple[VpnPeer, ...] = ()    # online first, then by name
+    tunnels: Tuple[VpnTunnel, ...] = ()
+
+
+@dataclass(frozen=True)
+class NetEvent:
+    ts: float                          # time.time()
+    level: str                         # "info" | "warn" | "crit"
+    text: str                          # one short plain sentence
+
+
+# ---- network tools (run only when the user asks) ----------------------------
+@dataclass(frozen=True)
+class TraceHop:
+    ttl: int
+    ip: Optional[str]                  # None = no answer from this hop ("* * *")
+    rtts: Tuple[Optional[float], ...] = ()   # one per probe, ms, None = lost
+    kind: str = "unknown"              # "home" (private LAN) | "isp" (CGNAT / ISP) | "internet" | "target" | "unknown"
+    reached: bool = False              # this hop is the destination itself
+
+    @property
+    def replies(self) -> Tuple[float, ...]:
+        return tuple(r for r in self.rtts if r is not None)
+
+    @property
+    def avg_ms(self) -> Optional[float]:
+        r = self.replies
+        return sum(r) / len(r) if r else None
+
+    @property
+    def loss_pct(self) -> float:
+        return 100.0 * (len(self.rtts) - len(self.replies)) / len(self.rtts) if self.rtts else 0.0
+
+
+@dataclass(frozen=True)
+class TraceResult:
+    target: str                        # what the user typed
+    address: Optional[str] = None      # resolved IP
+    hops: Tuple[TraceHop, ...] = ()
+    done: bool = False
+    reached: bool = False
+    method: str = ""                   # "udp" (built-in) | "tracepath"
+    error: Optional[str] = None        # plain words, e.g. "could not find that name"
+
+
+@dataclass(frozen=True)
+class PortResult:
+    port: int
+    service: str                       # "HTTPS", "SSH", "" when unknown
+    state: str                         # "open" | "closed" | "filtered" | "error" | "pending"
+    ms: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class PortCheckResult:
+    target: str
+    address: Optional[str] = None
+    results: Tuple[PortResult, ...] = ()
+    done: bool = False
+    error: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class DnsTiming:
+    server: str                        # IP address
+    label: str                         # "your router", "Cloudflare", "Quad9", "Google", "configured"
+    in_use: bool                       # this computer uses it right now
+    ms: Optional[float] = None         # median of the answered tries
+    answered: int = 0
+    tries: int = 0
+    error: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class DnsReport:
+    timings: Tuple[DnsTiming, ...] = ()
+    done: bool = False
+    verdict: str = ""                  # one plain sentence
+
+
+@dataclass(frozen=True)
+class SpeedResult:
+    stage: str = "starting"            # "starting" | "latency" | "download" | "upload" | "done" | "error" | "cancelled"
+    progress: float = 0.0              # 0-1 over the whole test
+    idle_ms: Optional[float] = None    # latency with an idle line
+    loaded_ms: Optional[float] = None  # latency while downloading (bufferbloat)
+    down_mbps: Optional[float] = None
+    up_mbps: Optional[float] = None
+    bytes_used: int = 0                # data spent by the test so far
+    grade: Optional[str] = None        # "A" .. "F" for lag under load
+    samples: Tuple[float, ...] = ()    # live Mbps readings of the current stage, for the graph
+    error: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class DoctorStep:
+    key: str                           # "link" | "address" | "router" | "dns" | "internet" | "portal"
+    name: str                          # "Wi-Fi link", "IP address", ...
+    status: str                        # "pending" | "running" | "ok" | "warn" | "fail" | "skip"
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class Diagnosis:
+    steps: Tuple[DoctorStep, ...] = ()
+    done: bool = False
+    level: str = "ok"                  # "ok" | "warn" | "fail"
+    verdict: str = ""                  # one plain sentence
+    suggestion: Optional[str] = None   # an action id the page can offer: "reconnect" | "dns" | "portal" | "wifi-on" | None
+
+
+@dataclass(frozen=True)
+class FoundDevice:
+    ip: str
+    mac: Optional[str]
+    random_mac: bool
+    is_gateway: bool
+    is_me: bool
+    ms: Optional[float] = None         # reply time when the device answered a probe
+
+
+@dataclass(frozen=True)
+class LanScanResult:
+    subnet: Optional[str] = None       # e.g. "192.0.2.0/24"
+    devices: Tuple[FoundDevice, ...] = ()
+    probed: int = 0
+    total: int = 0
+    done: bool = False
+    error: Optional[str] = None

@@ -33,4 +33,4 @@ Issues = "https://github.com/fdjfnd222dd/ctop-tui/issues"
 ctop = "ctop.app:main"
 
 [tool.setuptools]
-packages = ["ctop", "ctop.panels", "ctop.collectors", "ctop.render"]
+packages = ["ctop", "ctop.panels", "ctop.collectors", "ctop.render", "ctop.tools"]
